@@ -1,0 +1,23 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+fastapi = "*"
+uvicorn = {extras = ["standard"], version = "*"}
+sqlalchemy = "*"
+psycopg2-binary = "*"
+passlib = {extras = ["bcrypt"], version = "*"}
+python-jose = {extras = ["cryptography"], version = "*"}
+python-multipart = "*"
+pydantic-settings = "*"
+pydantic = {extras = ["email"], version = "*"}
+sqladmin = "*"
+faker = "*"
+google-auth = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.14"
