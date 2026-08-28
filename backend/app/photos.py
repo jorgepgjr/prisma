@@ -44,6 +44,15 @@ def get_photo_file(filename: str):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path)
 
+@router.get("/class/{class_id}", response_model=List[schemas.PhotoResponse])
+def get_photos_by_class(class_id: int, session: Session = Depends(db.get_db)):
+    """
+    Retorna todas as fotos vinculadas a uma turma específica.
+    """
+    photos = session.query(models.Photo).filter(models.Photo.class_id == class_id).all()
+    return photos
+
+
 @router.post("/{photo_id}/tags/{tag_id}", response_model=schemas.PhotoResponse)
 def add_tag_to_photo(photo_id: int, tag_id: int, session: Session = Depends(db.get_db)):
     photo = session.query(models.Photo).filter(models.Photo.id == photo_id).first()

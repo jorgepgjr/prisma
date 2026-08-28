@@ -99,7 +99,7 @@ class PhotoTagStudents(BaseModel):
 class ChildResponse(BaseModel):
     id: str
     name: str
-    avatar_path: str
+    avatar_url: str
     classroom: str
     created_at: datetime
     

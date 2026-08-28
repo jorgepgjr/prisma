@@ -17,7 +17,6 @@ from .models import (
     photo_student_link
 )
 
-# Inicializa Faker em Português do Brasil para nomes realistas
 fake = Faker('pt_BR')
 
 def clean_name(name: str) -> str:
@@ -28,17 +27,13 @@ def clean_name(name: str) -> str:
     return name
 
 def clean_database(session: Session):
-    print("Limpando registros antigos do banco de dados...")
-    # Deleta associações N:N
-    session.execute(photo_student_link.delete())
-    session.execute(user_class_link.delete())
-    # Deleta tabelas principais
-    session.query(Photo).delete()
-    session.query(Student).delete()
-    session.query(Class).delete()
-    session.query(User).delete()
-    session.commit()
-    print("Banco de dados limpo com sucesso!")
+    print("Limpando registros antigos do banco de dados (DROP TABLE)...")
+    from .db import engine
+    from .models import Base
+    # Deleta e recria todas as tabelas para sincronizar schema
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    print("Banco de dados limpo e recriado com sucesso!")
 
 def seed_data():
     session = SessionLocal()
@@ -207,7 +202,7 @@ def seed_data():
             uploader_id = professores_da_turma[0].id if professores_da_turma else diretor.id
             
             foto = Photo(
-                file_id=file_name,
+                file_path=file_name,
                 title=f"Atividade {turma.name} - Imagem {idx + 1}",
                 description=fake.sentence(),
                 uploaded_by_user_id=uploader_id,
@@ -225,6 +220,94 @@ def seed_data():
             
         session.commit()
         print(f"{fotos_totais} fotos de teste registradas logicamente no banco de dados.")
+        
+        # 8. Criação de Dados TinhaKids (Pais, Crianças, Posts, Portfólio)
+        from .models import Parent, Child, Post, Project
+        from .security import get_password_hash
+        import json
+        from datetime import datetime, timedelta
+        
+        print("\nSemeando dados TinhaKids...")
+        
+        parent = Parent(
+            id="parent_teste",
+            name="João Teste",
+            email="teste@teste.com",
+            phone="11999999999",
+            hashed_password=get_password_hash("123456"),
+            is_active=True
+        )
+        session.add(parent)
+        
+        child_pedro = Child(
+            id="pedro",
+            name="Pedro",
+            avatar_path="https://images.unsplash.com/photo-1503919545889-aef636e10ad4?auto=format&fit=crop&q=80&w=300",
+            classroom="Maternal II - Profª Ana"
+        )
+        child_sofia = Child(
+            id="sofia",
+            name="Sofia",
+            avatar_path="https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&q=80&w=300",
+            classroom="Maternal II - Profª Ana"
+        )
+        
+        parent.children.extend([child_pedro, child_sofia])
+        session.add_all([child_pedro, child_sofia])
+        
+        # Posts
+        now = datetime.utcnow()
+        posts_data = [
+            ("post_1", [child_pedro, child_sofia], "https://images.unsplash.com/photo-1513364776144-60967b0f800f?auto=format&fit=crop&q=80&w=800", "Hoje aprendemos sobre as cores usando tinta guache! 🎨 As crianças misturaram as cores primárias para ver novas cores surgindo. Foi uma festa de criatividade e descobertas!", now - timedelta(hours=2)),
+            ("post_2", [child_pedro], "https://images.unsplash.com/photo-1515488042361-404e9250afef?auto=format&fit=crop&q=80&w=800", "O Pedro ficou super concentrado montando a maior torre de blocos hoje! 🧱 Ele trabalhou muito bem o equilíbrio e a noção de espaço.", now - timedelta(hours=4)),
+            ("post_3", [child_sofia], "https://images.unsplash.com/photo-1530606901857-6c97337def3c?auto=format&fit=crop&q=80&w=800", "A Sofia ajudando a regar a nossa horta da escola. Ela adorou ver como as sementinhas de feijão que plantamos estão crescendo fortes! 🌱💧", now - timedelta(hours=6)),
+            ("post_4", [child_pedro, child_sofia], "https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&q=80&w=800", "Momento de contação de histórias! 🦁📚 Hoje mergulhamos na aventura do leãozinho corajoso. Todos participaram ativamente imitando os animais da selva.", now - timedelta(days=1)),
+            ("post_5", [child_sofia], "https://images.unsplash.com/photo-1596464716127-f2a82984de30?auto=format&fit=crop&q=80&w=800", "Sofia explorando diferentes texturas com massinha de modelar caseira! 👩‍🎨 Ela criou flores e bichinhos fantásticos, exercitando muito a imaginação.", now - timedelta(days=2)),
+            ("post_6", [child_pedro], "https://images.unsplash.com/photo-1587654780291-39c9404d746b?auto=format&fit=crop&q=80&w=800", "Pedro se divertindo demais no caça ao tesouro do parquinho! 🏃‍♂️ Ele correu, achou pistas e trabalhou super bem em equipe para encontrar o baú de adesivos.", now - timedelta(days=3))
+        ]
+        
+        for p_id, p_children, p_img, p_caption, p_time in posts_data:
+            post = Post(
+                id=p_id,
+                classroom_name="Maternal II",
+                teacher_name="Profª Ana Souza",
+                teacher_avatar_url="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=300",
+                image_path=p_img,
+                caption=p_caption,
+                created_at=p_time
+            )
+            post.children.extend(p_children)
+            session.add(post)
+            
+        # Projects
+        projects_data = [
+            ("p_p1", child_pedro, "Autorretrato com Colagem", "https://images.unsplash.com/photo-1513364776144-60967b0f800f?auto=format&fit=crop&q=80&w=800", datetime(2026, 6, 15), ["Desenvolvimento da coordenação motora fina ao recortar e colar papéis.", "Exploração do autoreconhecimento das características e partes do rosto.", "Expressão de sentimentos e identidade pessoal através da arte livre."], "Atividade de identificação das partes do rosto usando materiais reciclados, recortes de revistas e lã para os cabelos. Pedro escolheu tons vibrantes e focou bastante no cabelo e olhos."),
+            ("p_p2", child_pedro, "Mestre da Construção", "https://images.unsplash.com/photo-1515488042361-404e9250afef?auto=format&fit=crop&q=80&w=800", datetime(2026, 6, 2), ["Noções de tridimensionalidade, gravidade, peso e equilíbrio das formas.", "Trabalho colaborativo e divisão de tarefas para alcançar objetivos coletivos.", "Resolução de problemas estruturais simples ao equilibrar blocos gigantes."], "Criação de estruturas tridimensionais usando blocos de madeira e plástico. Pedro liderou a construção de \"castelo fortificado\" com seus colegas de mesa."),
+            ("p_p3", child_pedro, "Germinação do Feijão", "https://images.unsplash.com/photo-1530606901857-6c97337def3c?auto=format&fit=crop&q=80&w=800", datetime(2026, 5, 18), ["Observação prática e anotação visual do crescimento dos vegetais.", "Compreensão do ciclo de vida básico das plantas e importância da água/sol.", "Estimulação de rotinas diárias de cuidado, responsabilidade e afeto."], "Acompanhamento do plantio de sementes em copinhos com algodão e terra. Pedro regou seu brotinho todos os dias e mediu a altura com ajuda da régua colorida."),
+            ("p_p4", child_pedro, "Sopros de Guache", "https://images.unsplash.com/photo-1596464716127-f2a82984de30?auto=format&fit=crop&q=80&w=800", datetime(2026, 4, 27), ["Estimulação da capacidade respiratória e sopro direcional.", "Exploração de misturas de tintas e formação espontânea de cores secundárias.", "Percepção de causa e efeito ao mover a tinta líquida no papel com canudinho."], "Atividade de artes soprando pingos de tinta com um canudo para criar padrões psicodélicos. Pedro achou a atividade muito divertida e a chamou de \"explosão espacial\"."),
+            ("p_p5", child_pedro, "Pintura Corporal e Sensorial", "https://images.unsplash.com/photo-1503919545889-aef636e10ad4?auto=format&fit=crop&q=80&w=800", datetime(2026, 3, 9), ["Exploração tátil e sensorial com tintas espessas de diferentes texturas.", "Expressão de movimentos amplos utilizando braços, mãos e pés no papel.", "Redução da aversão tátil a texturas molhadas ou pastosas."], "Pintura gigante no chão da sala de artes, utilizando as mãos e pés para carimbar formas. Estimulou a socialização e desinibição tátil das crianças."),
+            
+            ("s_p1", child_sofia, "Jardim das Borboletas", "https://images.unsplash.com/photo-1513364776144-60967b0f800f?auto=format&fit=crop&q=80&w=800", datetime(2026, 6, 18), ["Exploração de simetria por meio da dobra do papel pintado.", "Coordenação óculo-manual de alta precisão ao colar lantejoulas e fitas.", "Introdução aos insetos polinizadores e seu papel na natureza."], "Confecção de borboletas tridimensionais com papel dobrado e tinta. Dobrando o papel ao meio, Sofia aprendeu sobre cópias simétricas e decorou as asas com brilho."),
+            ("s_p2", child_sofia, "Horta Escolar Coletiva", "https://images.unsplash.com/photo-1530606901857-6c97337def3c?auto=format&fit=crop&q=80&w=800", datetime(2026, 6, 5), ["Educação alimentar através do contato direto com alimentos naturais.", "Desenvolvimento da paciência e respeito pelos tempos da natureza.", "Estímulo tátil ao manusear terra adubada, sementes e mudas."], "Plantio coletivo de alface e tomatinhos na horta do Maternal. Sofia ajudou a fazer os buraquinhos na terra e a colocar as pequenas mudas com todo carinho."),
+            ("s_p3", child_sofia, "Modelagem em Argila Natural", "https://images.unsplash.com/photo-1596464716127-f2a82984de30?auto=format&fit=crop&q=80&w=800", datetime(2026, 5, 22), ["Fortalecimento muscular das mãos e articulações finas.", "Experimentação de transformações físicas de sólido a maleável.", "Apreciação estética e autoria no desenvolvimento de esculturas."], "Sofia modelou pequenos pratinhos e bolinhas de argila natural, que depois de secos foram pintados com tinta metálica. Ela declarou que fez \"comidinhas de dinossauro\"."),
+            ("s_p4", child_sofia, "Sons e Chocalhos Caseiros", "https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&q=80&w=800", datetime(2026, 4, 12), ["Construção de instrumentos percussivos com sucata e grãos.", "Desenvolvimento de percepção de compasso, ritmo e som/silêncio.", "Trabalho de foco auditivo e discriminação de barulhos finos e grossos."], "Garrafinhas PET decoradas com grãos de feijão, arroz e lentilha. Sofia criou seu próprio chocalho rítmico e acompanhou a cantoria da Profª Ana."),
+            ("s_p5", child_sofia, "Explorando Cores Quentes", "https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&q=80&w=800", datetime(2026, 3, 15), ["Classificação de tonalidades em quentes (vermelho, amarelo, laranja).", "Desenho guiado expressivo baseado em música calma.", "Habilidades de preenchimento de espaço no papel sulfite gigante."], "Atividade de colorir inspirada em sons da natureza, usando gizes de cera pastel de cores quentes. Sofia desenhou grandes círculos simulando o sol e flores.")
+        ]
+        
+        for proj_id, p_child, p_title, p_img, p_date, p_obj, p_desc in projects_data:
+            proj = Project(
+                id=proj_id,
+                child_id=p_child.id,
+                title=p_title,
+                image_path=p_img,
+                completion_date=p_date,
+                description=p_desc,
+                pedagogical_objectives=json.dumps(p_obj)
+            )
+            session.add(proj)
+            
+        session.commit()
+        print("Dados do TinhaKids registrados com sucesso!")
         
         print("\nCarga inicial de dados finalizada com SUCESSO!")
 

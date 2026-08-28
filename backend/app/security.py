@@ -72,7 +72,11 @@ def generatePresignedUrl(image_path: str) -> str:
     """
     Simulates a presigned URL by generating a short-lived JWT token containing the path,
     which will be verified by the /api/v1/media endpoint.
+    Returns the path directly if it is an external URL (http/https).
     """
+    if image_path.startswith("http://") or image_path.startswith("https://"):
+        return image_path
+        
     expire = datetime.utcnow() + timedelta(minutes=15)
     to_encode = {"path": image_path, "exp": expire}
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
