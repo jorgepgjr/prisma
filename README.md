@@ -20,90 +20,70 @@ Antes de iniciar, certifique-se de ter instalado em sua máquina:
 
 ---
 
-## Como Rodar a Aplicação
+## Como Rodar a Aplicação Localmente
 
-### 1. Iniciar o Banco de Dados
+Você tem duas opções para iniciar a aplicação: **Automática (Recomendado)** ou **Manual**.
 
-O banco de dados PostgreSQL é gerenciado via Docker Compose. Para iniciá-lo, execute na raiz do projeto:
+### 1. Iniciar o Banco de Dados (PostgreSQL)
+
+O banco de dados é gerenciado via Docker Compose. Certifique-se de que o Docker está rodando e execute na raiz do projeto:
 
 ```bash
 docker compose up -d
 ```
 
-Isso subirá um container PostgreSQL na porta `5432` com as credenciais padrão configuradas no `docker-compose.yml`.
+### 2. Opção A: Iniciar Automático (Frontend + Backend)
+
+A forma mais rápida e recomendada de subir tudo (API e Interface) em um único terminal é através do nosso script de inicialização.
+
+Certifique-se de ter dado permissão de execução (apenas na primeira vez):
+```bash
+chmod +x start.sh
+```
+
+Execute o script:
+```bash
+./start.sh
+```
+
+O script vai subir a API Python na porta 8000 e o Next.js na porta 3000. Para encerrar ambos os processos, basta pressionar `CTRL+C` uma vez.
 
 ---
 
-### 2. Configurar e Iniciar o Backend
+### 2. Opção B: Iniciar Manualmente
 
-Navegue para o diretório do backend:
+Caso prefira rodar os serviços em terminais separados, siga os passos abaixo.
 
+#### Backend
+Em um terminal, acesse a pasta `backend/` e instale as dependências:
 ```bash
 cd backend
+pipenv install
 ```
 
-#### Passo A: Configurar Variáveis de Ambiente
-Verifique ou crie o arquivo `.env` na pasta `backend/`. Ele deve conter as seguintes configurações:
-
+Configure o arquivo `.env` em `backend/`:
 ```env
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/prisma
 SECRET_KEY=uma-chave-secreta-muito-segura-para-desenvolvimento-local-do-portal-web
 ```
 
-#### Passo B: Instalar as Dependências
-Utilize o Pipenv para instalar as dependências do Python em um ambiente virtual isolado:
-
+Alimente o Banco de Dados (Seed):
 ```bash
-pipenv install
+pipenv run python seed.py
 ```
+*(Nota: O script de seed popula contas de pais, crianças e projetos para o TinhaKids!)*
 
-#### Passo C: Alimentar o Banco de Dados (Seed)
-Para criar as tabelas e popular o banco de dados com dados de teste (usuários de demonstração, turmas, alunos e fotos), execute o script de semente:
-
-```bash
-pipenv run python -m app.seed
-```
-
-*Nota: Os seguintes usuários serão criados com a senha `mypassword`:*
-- *Administrador:* `admin@school.com`
-- *Diretor:* `diretor@school.com`
-- *Coordenador:* `coordenador@school.com`
-- *Marketing:* `marketing@school.com`
-- *Professora Marília Sena:* `marilia@school.com`
-
-#### Passo D: Iniciar o Servidor FastAPI
-Inicie o servidor de desenvolvimento utilizando o Uvicorn:
-
+Inicie o Servidor:
 ```bash
 pipenv run uvicorn app.main:app --reload
 ```
+A API ficará disponível em http://localhost:8000 e o Swagger em http://localhost:8000/docs.
 
-A API estará disponível em [http://localhost:8000](http://localhost:8000).
-Você pode acessar a documentação interativa (Swagger UI) em [http://localhost:8000/docs](http://localhost:8000/docs).
-A área de administração do SQLAdmin estará disponível em [http://localhost:8000/admin](http://localhost:8000/admin).
-
----
-
-### 3. Configurar e Iniciar o Frontend
-
-Em um novo terminal, navegue para o diretório do frontend:
-
+#### Frontend
+Em outro terminal, acesse a pasta `frontend/`:
 ```bash
 cd frontend
-```
-
-#### Passo A: Instalar Dependências
-Instale os pacotes do Node.js:
-
-```bash
 npm install
-```
-
-#### Passo B: Iniciar o Servidor Next.js
-Execute o servidor de desenvolvimento:
-
-```bash
 npm run dev
 ```
-
-Abra [http://localhost:3000](http://localhost:3000) no seu navegador para acessar a aplicação.
+O portal ficará disponível em http://localhost:3000.
