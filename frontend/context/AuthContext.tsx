@@ -30,6 +30,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (savedToken) {
       const decoded = decodeJWT(savedToken);
       if (decoded && decoded.exp * 1000 > Date.now()) {
+        // Restaura a sessão persistida ao montar o provedor no navegador.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setToken(savedToken);
         setUser({ email: decoded.sub, role: decoded.role });
       } else {

@@ -1,901 +1,391 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { useAuth } from "../../../context/AuthContext";
-import { 
-  ArrowLeft, 
-  Search, 
-  Filter, 
-  Calendar,
-  SlidersHorizontal,
-  Image as ImageIcon,
-  CheckCircle,
-  AlertCircle,
-  Lock,
-  Loader2,
-  Users,
-  X,
-  Tag,
-  Check,
-  AlertTriangle,
-  Download,
-  FolderOpen
+import Image from "next/image";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft, CalendarDays, Check, CheckCircle2, FileImage, ImageIcon, Info,
+  Layers3, LoaderCircle, Send, Tag as TagIcon, UserRoundCheck, X,
 } from "lucide-react";
+import { useAuth } from "../../../context/AuthContext";
 
-interface PhotoData {
-  id: number;
-  file_id: string;
-  title: string;
-  uploaded_by_user_id: number;
-  class_id: number;
-  status: string;
-  created_at: string;
-  student_ids: number[];
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+type Tag = { id: number; name: string };
+type Photo = {
+  id: number; file_path: string; title?: string; description?: string;
+  uploader_name?: string; created_at: string; student_ids: number[]; tags: Tag[];
+};
+type Student = { id: number; name: string; child_id?: string | null };
+type FamilyChild = {
+  id: string; name: string; classroom: string; parent_names: string[];
+  parent_emails: string[]; linked_student_id?: number | null;
+};
+type ManagedPost = {
+  id: string; image_url: string; image_urls: string[]; caption: string;
+  teacher_name: string; child_names: string[]; created_at: string;
+};
+type ModalKind = "post" | "portfolio" | "family" | null;
+
+function detailFrom(data: unknown, fallback: string) {
+  if (typeof data === "object" && data && "detail" in data && typeof data.detail === "string") return data.detail;
+  return fallback;
 }
 
-interface ClassData {
-  id: number;
-  name: string;
-  year: number;
-  created_at: string;
+function photoUrl(photo: Photo) {
+  return `${API_URL}/api/photos/file/${encodeURIComponent(photo.file_path)}`;
 }
 
-interface StudentData {
-  id: number;
-  name: string;
-  class_id: number;
-  marketing_allowed: boolean;
-  status: string;
+function signedUrl(value: string) {
+  return value.startsWith("http") ? value : `${API_URL}${value}`;
 }
 
-export default function ClassPhotosPage() {
-  const params = useParams();
-  const classId = params.id as string;
-  const { token, user, loading: authLoading } = useAuth();
-  const router = useRouter();
+function monthKey(date: string) {
+  const value = new Date(date);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
+}
 
-  const [currentClass, setCurrentClass] = useState<ClassData | null>(null);
-  const [photos, setPhotos] = useState<PhotoData[]>([]);
-  const [students, setStudents] = useState<StudentData[]>([]);
+function monthLabel(date: string) {
+  const label = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(new Date(date));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+export default function ClassPage() {
+  const params = useParams<{ id: string }>();
+  const classId = Number(params.id);
+  const { token } = useAuth();
+  const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
+
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [posts, setPosts] = useState<ManagedPost[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [families, setFamilies] = useState<FamilyChild[]>([]);
+  const [activePhotoId, setActivePhotoId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [selectedStudents, setSelectedStudents] = useState<number[]>([]);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [groupByMonth, setGroupByMonth] = useState(true);
+  const [studentFilter, setStudentFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [modal, setModal] = useState<ModalKind>(null);
+  const [familyStudent, setFamilyStudent] = useState<Student | null>(null);
+  const [familyChildId, setFamilyChildId] = useState("");
+  const [caption, setCaption] = useState("");
+  const [portfolioTitle, setPortfolioTitle] = useState("");
+  const [portfolioDescription, setPortfolioDescription] = useState("");
+  const [objectives, setObjectives] = useState("");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
-  // Filtros e Ordenação
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("ALL");
-  const [sortBy, setSortBy] = useState("NEWEST"); // NEWEST or OLDEST
-
-  // Navegação Lateral / Abas
-  const [activeTab, setActiveTab] = useState<"TODOS" | "ACTIVITIES" | "STUDENTS" | "PORTFOLIO">("TODOS");
-  const [selectedFilterStudentIds, setSelectedFilterStudentIds] = useState<number[]>([]);
-  const [studentSearchTerm, setStudentSearchTerm] = useState("");
-
-  // Detalhe e Marcação
-  const [selectedPhoto, setSelectedPhoto] = useState<PhotoData | null>(null);
-  const [taggingLoadingId, setTaggingLoadingId] = useState<number | null>(null);
-  const [statusUpdating, setStatusUpdating] = useState(false);
-  
-  // Transição de scroll / aviso de mês ativo
-  const [activeMonth, setActiveMonth] = useState<string | null>(null);
-
-  const fetchClassData = async () => {
+  const loadData = useCallback(async () => {
+    if (!token || !Number.isFinite(classId)) return;
     setLoading(true);
-    setError(null);
+    setError("");
     try {
-      // 1. Busca todas as turmas para extrair a turma atual
-      const classRes = await fetch("http://localhost:8000/api/classes/", {
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
-      if (!classRes.ok) throw new Error("Não foi possível buscar os dados da turma.");
-      const classesData: ClassData[] = await classRes.json();
-      const match = classesData.find(c => c.id === Number(classId));
-      if (!match) throw new Error("Turma não encontrada.");
-      setCurrentClass(match);
-
-      // 2. Busca as fotos da turma
-      const photosRes = await fetch(`http://localhost:8000/api/photos/class/${classId}`, {
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
-      if (!photosRes.ok) throw new Error("Falha ao carregar as fotos.");
-      const photosData = await photosRes.json();
-      setPhotos(photosData);
-
-      // 3. Busca os alunos da turma
-      const studentsRes = await fetch(`http://localhost:8000/api/students/class/${classId}`, {
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
-      if (studentsRes.ok) {
-        const studentsData = await studentsRes.json();
-        setStudents(studentsData);
-      }
-    } catch (err: any) {
-      setError(err.message || "Erro ao carregar dados.");
+      const responses = await Promise.all([
+        fetch(`${API_URL}/api/photos/class/${classId}`, { headers }),
+        fetch(`${API_URL}/api/students/class/${classId}`, { headers }),
+        fetch(`${API_URL}/api/posts/?class_id=${classId}`, { headers }),
+        fetch(`${API_URL}/api/tags/`, { headers }),
+        fetch(`${API_URL}/api/families/children`, { headers }),
+      ]);
+      if (responses.some((response) => !response.ok)) throw new Error("Não foi possível carregar os dados da turma.");
+      const [photoData, studentData, postData, tagData, familyData] = await Promise.all(responses.map((response) => response.json()));
+      setPhotos(photoData);
+      setStudents(studentData);
+      setPosts(postData);
+      setTags(tagData);
+      setFamilies(familyData);
+      setActivePhotoId((current) => current ?? photoData[0]?.id ?? null);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Erro ao carregar a turma.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [classId, headers, token]);
 
   useEffect(() => {
-    if (!authLoading && token && user) {
-      fetchClassData();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadData();
+  }, [loadData]);
+
+  const filteredPhotos = useMemo(() => photos.filter((photo) => {
+    const created = new Date(photo.created_at);
+    if (studentFilter && !photo.student_ids.includes(Number(studentFilter))) return false;
+    if (tagFilter && !photo.tags.some((tag) => tag.id === Number(tagFilter))) return false;
+    if (dateFrom && created < new Date(`${dateFrom}T00:00:00`)) return false;
+    if (dateTo && created > new Date(`${dateTo}T23:59:59`)) return false;
+    return true;
+  }), [dateFrom, dateTo, photos, studentFilter, tagFilter]);
+
+  const groups = useMemo(() => {
+    if (!groupByMonth) return [["Todas as fotos", filteredPhotos]] as [string, Photo[]][];
+    const values = new Map<string, Photo[]>();
+    filteredPhotos.forEach((photo) => {
+      const key = monthKey(photo.created_at);
+      values.set(key, [...(values.get(key) ?? []), photo]);
+    });
+    return [...values.entries()].map(([, items]) => [monthLabel(items[0].created_at), items] as [string, Photo[]]);
+  }, [filteredPhotos, groupByMonth]);
+
+  const activePhoto = photos.find((photo) => photo.id === activePhotoId) ?? null;
+  const actionPhotoIds = selectedIds.length ? selectedIds : activePhoto ? [activePhoto.id] : [];
+
+  function selectPhoto(photo: Photo) {
+    setActivePhotoId(photo.id);
+    if (selectionMode) {
+      setSelectedIds((current) => current.includes(photo.id) ? current.filter((id) => id !== photo.id) : [...current, photo.id]);
     }
-  }, [authLoading, token, user, classId]);
+  }
 
-  // Observer para monitoramento de transição de scroll de meses
-  useEffect(() => {
-    if (photos.length === 0 || activeTab === "STUDENTS") {
-      setActiveMonth(null);
+  function toggleStudent(studentId: number) {
+    setSelectedStudents((current) => current.includes(studentId) ? current.filter((id) => id !== studentId) : [...current, studentId]);
+  }
+
+  function openAction(kind: "post" | "portfolio") {
+    if (!actionPhotoIds.length) {
+      setError("Selecione ao menos uma foto.");
       return;
     }
-    
-    const observerOptions = {
-      root: null,
-      rootMargin: "-80px 0px -70% 0px",
-      threshold: 0
-    };
+    setError("");
+    setSelectedStudents([]);
+    setModal(kind);
+  }
 
-    const handleIntersection = (entries: IntersectionObserverEntry[]) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          const month = entry.target.getAttribute("data-month");
-          if (month) {
-            setActiveMonth(month);
-          }
-        }
-      });
-    };
+  async function savePost() {
+    await save(`${API_URL}/api/posts/`, { photo_ids: actionPhotoIds, caption, student_ids: selectedStudents }, "Publicação enviada às famílias.");
+  }
 
-    const observer = new IntersectionObserver(handleIntersection, observerOptions);
-    const targets = document.querySelectorAll("[data-month]");
-    targets.forEach(target => observer.observe(target));
+  async function savePortfolio() {
+    await save(`${API_URL}/api/portfolio/`, {
+      photo_ids: actionPhotoIds,
+      student_ids: selectedStudents,
+      title: portfolioTitle,
+      description: portfolioDescription,
+      pedagogical_objectives: objectives.split("\n").map((value) => value.trim()).filter(Boolean),
+    }, "Portfólio criado para os alunos selecionados.");
+  }
 
-    return () => {
-      targets.forEach(target => observer.unobserve(target));
-      observer.disconnect();
-    };
-  }, [photos, activeTab, selectedFilterStudentIds, searchTerm, statusFilter, sortBy]);
-
-  // Selecionar aluno a partir do card para adicionar filtro
-  const handleSelectStudentCard = (student: StudentData) => {
-    setSelectedFilterStudentIds(prev => {
-      if (prev.includes(student.id)) return prev;
-      return [...prev, student.id];
-    });
-    setActiveTab("TODOS");
-  };
-
-  // Salvar marcação de alunos
-  const handleToggleTagStudent = async (studentId: number) => {
-    if (!selectedPhoto) return;
-    setTaggingLoadingId(studentId);
-
-    const isCurrentlyTagged = selectedPhoto.student_ids?.includes(studentId);
-    let updatedStudentIds = [...(selectedPhoto.student_ids || [])];
-    
-    if (isCurrentlyTagged) {
-      updatedStudentIds = updatedStudentIds.filter(id => id !== studentId);
-    } else {
-      updatedStudentIds.push(studentId);
-    }
-
+  async function save(url: string, body: object, success: string) {
+    setSaving(true);
+    setError("");
     try {
-      const res = await fetch(`http://localhost:8000/api/photos/${selectedPhoto.id}/tag-students`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ student_ids: updatedStudentIds })
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.detail || "Erro ao salvar marcação de aluno.");
-      }
-
-      // Atualiza o state local para a foto no modal
-      const updatedPhoto = { ...selectedPhoto, student_ids: updatedStudentIds };
-      setSelectedPhoto(updatedPhoto);
-
-      // Atualiza na lista de fotos principal
-      setPhotos(prevPhotos => 
-        prevPhotos.map(p => p.id === selectedPhoto.id ? updatedPhoto : p)
-      );
-
-    } catch (err: any) {
-      alert(err.message || "Erro ao marcar aluno.");
+      const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(detailFrom(data, "Não foi possível concluir a operação."));
+      setMessage(success);
+      setModal(null);
+      setCaption(""); setPortfolioTitle(""); setPortfolioDescription(""); setObjectives("");
+      setSelectedIds([]); setSelectionMode(false);
+      await loadData();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível concluir a operação.");
     } finally {
-      setTaggingLoadingId(null);
+      setSaving(false);
     }
-  };
+  }
 
-  // Atualizar status da foto
-  const handleUpdateStatus = async (newStatus: string) => {
-    if (!selectedPhoto) return;
-    setStatusUpdating(true);
+  async function updateTag(tagId: number, remove: boolean) {
+    if (!activePhoto) return;
+    const response = await fetch(`${API_URL}/api/photos/${activePhoto.id}/tags/${tagId}`, { method: remove ? "DELETE" : "POST", headers });
+    if (!response.ok) {
+      const data = await response.json();
+      setError(detailFrom(data, "Não foi possível atualizar a tag."));
+      return;
+    }
+    await loadData();
+  }
 
+  function openFamily(student: Student) {
+    setFamilyStudent(student);
+    setFamilyChildId(student.child_id ?? "");
+    setModal("family");
+  }
+
+  async function saveFamilyLink() {
+    if (!familyStudent) return;
+    setSaving(true);
+    setError("");
     try {
-      const res = await fetch(`http://localhost:8000/api/photos/${selectedPhoto.id}/status`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: newStatus })
+      const response = await fetch(`${API_URL}/api/families/students/${familyStudent.id}`, {
+        method: "PUT", headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ child_id: familyChildId || null }),
       });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.detail || "Erro ao atualizar status da foto.");
-      }
-
-      const updatedPhotoData = await res.json();
-      
-      // Atualiza o state local da foto no modal
-      const updatedPhoto = { 
-        ...selectedPhoto, 
-        status: updatedPhotoData.status,
-        student_ids: updatedPhotoData.student_ids || selectedPhoto.student_ids
-      };
-      setSelectedPhoto(updatedPhoto);
-
-      // Atualiza na lista de fotos principal
-      setPhotos(prevPhotos => 
-        prevPhotos.map(p => p.id === selectedPhoto.id ? updatedPhoto : p)
-      );
-
-    } catch (err: any) {
-      alert(err.message || "Erro ao atualizar status.");
+      const data = await response.json();
+      if (!response.ok) throw new Error(detailFrom(data, "Não foi possível salvar o vínculo."));
+      setMessage(`${familyStudent.name} foi vinculado ao perfil familiar.`);
+      setModal(null);
+      await loadData();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível salvar o vínculo.");
     } finally {
-      setStatusUpdating(false);
+      setSaving(false);
     }
-  };
-
-  if (authLoading || loading) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
-      </div>
-    );
   }
 
-  if (error || !currentClass) {
-    return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6">
-        <div className="p-4 bg-rose-500/10 border border-rose-500/20 text-rose-300 rounded-2xl mb-4 max-w-md text-center">
-          <AlertCircle className="w-8 h-8 mx-auto mb-2 text-rose-400" />
-          <p className="font-semibold">Erro ao carregar informações</p>
-          <p className="text-xs mt-1 text-slate-400">{error || "Turma não encontrada."}</p>
-        </div>
-        <button
-          onClick={() => router.push("/")}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-900 border border-slate-800 hover:bg-slate-850 rounded-xl transition-colors cursor-pointer text-sm"
-        >
-          <ArrowLeft className="w-4 h-4" /> Voltar ao Painel
-        </button>
-      </div>
-    );
-  }
-
-  // --- LOGICA DE FILTRO E ORDENACAO ---
-  let filteredPhotos = [...photos];
-
-  // Filtro de acordo com a aba e aluno selecionado
-  if (activeTab === "PORTFOLIO") {
-    filteredPhotos = filteredPhotos.filter(p => p.status === "APPROVED_FOR_MARKETING");
-  }
-
-  // Filtrar por alunos selecionados (tags de multi-select)
-  if (selectedFilterStudentIds.length > 0) {
-    filteredPhotos = filteredPhotos.filter(p => 
-      p.student_ids?.some(id => selectedFilterStudentIds.includes(id))
-    );
-  }
-
-  // Filtro por termo de busca
-  if (searchTerm) {
-    filteredPhotos = filteredPhotos.filter(p => 
-      p.title?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }
-
-  // Filtro por status da foto
-  if (statusFilter !== "ALL") {
-    filteredPhotos = filteredPhotos.filter(p => p.status === statusFilter);
-  }
-
-  // Ordenação das fotos
-  filteredPhotos.sort((a, b) => {
-    const dateA = new Date(a.created_at).getTime();
-    const dateB = new Date(b.created_at).getTime();
-    return sortBy === "NEWEST" ? dateB - dateA : dateA - dateB;
-  });
-
-  // --- AGRUPAMENTO POR MESES ---
-  const monthNames = [
-    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
-  ];
-
-  const getMonthYearKey = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
-  };
-
-  // Agrupa preservando a ordenação definida acima
-  const groupedPhotos: { [key: string]: PhotoData[] } = {};
-  filteredPhotos.forEach(photo => {
-    const key = getMonthYearKey(photo.created_at);
-    if (!groupedPhotos[key]) {
-      groupedPhotos[key] = [];
+  async function createFamilyProfile(payload: { parent_name: string; parent_email: string; parent_phone: string; initial_password: string }) {
+    if (!familyStudent) return;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_URL}/api/families/students/${familyStudent.id}`, {
+        method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(detailFrom(data, "Não foi possível cadastrar a família."));
+      setMessage(`Responsável cadastrado e vinculado a ${familyStudent.name}.`);
+      setModal(null);
+      await loadData();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível cadastrar a família.");
+    } finally {
+      setSaving(false);
     }
-    groupedPhotos[key].push(photo);
-  });
-
-  // Chaves dos meses agrupados
-  const monthKeys = Object.keys(groupedPhotos);
-
-  // Alunos filtrados por busca
-  const filteredStudents = students.filter(s => 
-    s.name.toLowerCase().includes(studentSearchTerm.toLowerCase())
-  );
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "APPROVED_FOR_MARKETING":
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/10 text-emerald-450 border border-emerald-500/20">
-            <CheckCircle className="w-3 h-3 text-emerald-400" /> Marketing
-          </span>
-        );
-      case "PRIVATE_SCHOOL_ONLY":
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20">
-            <Lock className="w-3 h-3 text-sky-400" /> Privado
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-            <AlertCircle className="w-3 h-3 text-amber-400" /> Pendente
-          </span>
-        );
-    }
-  };
+  }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row">
-      {/* Menu Lateral Esquerdo */}
-      <aside className="w-full md:w-64 md:h-screen md:sticky md:top-0 bg-slate-900/20 border-b md:border-b-0 md:border-r border-slate-900/80 backdrop-blur-xl p-5 flex flex-col justify-between shrink-0 z-40">
-        <div>
-          {/* Voltar ao Painel */}
-          <button
-            onClick={() => router.push("/")}
-            className="group flex items-center gap-2 text-xs text-slate-500 hover:text-slate-200 transition-colors mb-6 cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-            Voltar ao Painel
-          </button>
-          
-          {/* Infos da Turma */}
-          <div className="mb-8">
-            <h2 className="text-xl font-bold bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent truncate" title={currentClass.name}>
-              {currentClass.name}
-            </h2>
-            <p className="text-xs text-slate-550 mt-1">Ano Letivo {currentClass.year}</p>
-          </div>
-
-          {/* Opções de Navegação */}
-          <nav className="space-y-1.5">
-            <button
-              onClick={() => {
-                setActiveTab("TODOS");
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer ${
-                activeTab === "TODOS"
-                  ? "bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 shadow-[0_0_15px_-3px_rgba(79,70,229,0.1)]"
-                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200 border border-transparent"
-              }`}
-            >
-              <ImageIcon className="w-4 h-4" />
-              Todos
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab("ACTIVITIES");
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer ${
-                activeTab === "ACTIVITIES"
-                  ? "bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 shadow-[0_0_15px_-3px_rgba(79,70,229,0.1)]"
-                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200 border border-transparent"
-              }`}
-            >
-              <Calendar className="w-4 h-4" />
-              Atividades
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab("PORTFOLIO");
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer ${
-                activeTab === "PORTFOLIO"
-                  ? "bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 shadow-[0_0_15px_-3px_rgba(79,70,229,0.1)]"
-                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200 border border-transparent"
-              }`}
-            >
-              <FolderOpen className="w-4 h-4" />
-              Portfólio
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab("STUDENTS");
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer ${
-                activeTab === "STUDENTS"
-                  ? "bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 shadow-[0_0_15px_-3px_rgba(79,70,229,0.1)]"
-                  : "text-slate-400 hover:bg-slate-900/50 hover:text-slate-200 border border-transparent"
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              Alunos
-            </button>
-          </nav>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-[1500px] items-center gap-4 px-5 py-4">
+          <Link href="/" className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:bg-slate-100"><ArrowLeft className="h-5 w-5" /></Link>
+          <div><h1 className="font-semibold">Fotos e publicações</h1><p className="text-xs text-slate-500">Turma #{classId}</p></div>
         </div>
+      </header>
 
-        {/* Footer do Menu */}
-        <div className="mt-8 pt-4 border-t border-slate-900/60 hidden md:block">
-          <p className="text-xs font-semibold text-slate-400 truncate">{user?.email}</p>
-          <p className="text-[9px] text-slate-500 font-medium uppercase mt-0.5 tracking-wider">{user?.role}</p>
-        </div>
-      </aside>
+      <main className="mx-auto max-w-[1500px] px-5 py-6">
+        {error && <div className="mb-4 flex items-start justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><span>{error}</span><button onClick={() => setError("")}><X className="h-4 w-4" /></button></div>}
+        {message && <div className="mb-4 flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-800"><CheckCircle2 className="h-5 w-5" />{message}</div>}
 
-      {/* Conteúdo Principal */}
-      <div className="flex-1 flex flex-col min-h-screen relative">
-        
-        {/* Aviso flutuante discreto de transição de mês */}
-        {activeMonth && activeTab !== "STUDENTS" && (
-          <div className="fixed top-6 left-1/2 -translate-x-1/2 md:left-[calc(50%+128px)] z-30 bg-slate-900/90 border border-indigo-500/30 text-indigo-400 text-[10px] font-bold tracking-wider uppercase px-4 py-1.5 rounded-full shadow-[0_4px_20px_rgba(0,0,0,0.5)] backdrop-blur-md transition-all duration-300 animate-fade-in flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5" />
-            <span>{activeMonth}</span>
+        {loading ? <div className="grid min-h-[480px] place-items-center"><LoaderCircle className="h-8 w-8 animate-spin text-blue-600" /></div> : (
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+            <section className="space-y-5">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div><h2 className="font-semibold">Biblioteca de fotos</h2><p className="text-sm text-slate-500">{filteredPhotos.length} de {photos.length} fotos</p></div>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => { setSelectionMode((value) => !value); setSelectedIds([]); }} className={`rounded-lg border px-3 py-2 text-sm font-medium ${selectionMode ? "border-blue-600 bg-blue-50 text-blue-700" : "border-slate-300 hover:bg-slate-50"}`}><Check className="mr-1.5 inline h-4 w-4" />{selectionMode ? "Cancelar seleção" : "Selecionar várias"}</button>
+                    <button onClick={() => openAction("portfolio")} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-50"><FileImage className="mr-1.5 inline h-4 w-4" />Portfólio</button>
+                    <button onClick={() => openAction("post")} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"><Send className="mr-1.5 inline h-4 w-4" />Publicar{actionPhotoIds.length > 1 ? ` (${actionPhotoIds.length})` : ""}</button>
+                  </div>
+                </div>
+
+                <div className="mb-5 grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-5">
+                  <select value={studentFilter} onChange={(event) => setStudentFilter(event.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value="">Todos os alunos</option>{students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}</select>
+                  <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value="">Todas as tags</option>{tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select>
+                  <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" aria-label="Data inicial" />
+                  <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" aria-label="Data final" />
+                  <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><input type="checkbox" checked={groupByMonth} onChange={(event) => setGroupByMonth(event.target.checked)} /> Agrupar por mês</label>
+                </div>
+
+                {photos.length === 0 ? <EmptyPhotos /> : filteredPhotos.length === 0 ? <p className="py-16 text-center text-sm text-slate-500">Nenhuma foto corresponde aos filtros.</p> : groups.map(([label, items]) => (
+                  <div key={label} className="mb-7 last:mb-0">
+                    <div className="mb-3 flex items-center gap-2"><CalendarDays className="h-4 w-4 text-slate-400" /><h3 className="text-sm font-semibold">{label}</h3><span className="text-xs text-slate-400">{items.length}</span></div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6">
+                      {items.map((photo) => {
+                        const selected = selectedIds.includes(photo.id);
+                        return <button key={photo.id} onClick={() => selectPhoto(photo)} className={`group relative aspect-square overflow-hidden rounded-xl border-2 bg-slate-100 ${selected ? "border-blue-600 ring-2 ring-blue-100" : activePhotoId === photo.id ? "border-slate-500" : "border-transparent"}`}>
+                          <Image src={photoUrl(photo)} alt={photo.title ?? "Foto escolar"} fill unoptimized className="object-cover transition group-hover:scale-[1.02]" />
+                          {selectionMode && <span className={`absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full border-2 ${selected ? "border-blue-600 bg-blue-600 text-white" : "border-white bg-black/25 text-transparent"}`}><Check className="h-3.5 w-3.5" /></span>}
+                          <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 pb-2 pt-7 text-left text-[11px] text-white">{new Date(photo.created_at).toLocaleDateString("pt-BR")}</span>
+                        </button>;
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid gap-5 lg:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="mb-3 font-semibold">Vínculos familiares</h2>
+                  <div className="space-y-2">{students.map((student) => <div key={student.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3"><div className={`grid h-9 w-9 place-items-center rounded-full ${student.child_id ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}><UserRoundCheck className="h-4 w-4" /></div><div className="min-w-0 flex-1"><p className="text-sm font-medium">{student.name}</p><p className="truncate text-xs text-slate-500">{student.child_id ? `Perfil: ${student.child_id}` : "Sem responsável vinculado"}</p></div><button onClick={() => openFamily(student)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50">{student.child_id ? "Alterar" : "Vincular"}</button></div>)}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="mb-3 font-semibold">Publicações recentes</h2>
+                  {posts.length === 0 ? <p className="text-sm text-slate-500">Nenhuma publicação criada.</p> : <div className="space-y-2">{posts.slice(0, 6).map((post) => <div key={post.id} className="flex gap-3 rounded-xl border border-slate-200 p-2.5"><div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg"><Image src={signedUrl(post.image_url)} alt="Publicação" fill unoptimized className="object-cover" />{post.image_urls?.length > 1 && <span className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white"><Layers3 className="mr-0.5 inline h-3 w-3" />{post.image_urls.length}</span>}</div><div className="min-w-0"><p className="line-clamp-2 text-sm">{post.caption}</p><p className="mt-1 truncate text-xs text-slate-500">{post.child_names.join(", ")}</p></div></div>)}</div>}
+                </div>
+              </div>
+            </section>
+
+            <PhotoDetails photo={activePhoto} students={students} tags={tags} onTag={updateTag} />
           </div>
         )}
+      </main>
 
-        {/* Topbar com filtros rápidos */}
-        <header className="border-b border-slate-900 bg-slate-950/80 backdrop-blur-md sticky top-0 z-30 px-6 py-4 flex flex-col gap-3">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 w-full">
-            <div>
-              <h1 className="text-lg font-bold bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent flex items-center gap-2">
-                {activeTab === "TODOS" && "Todas as Fotos"}
-                {activeTab === "ACTIVITIES" && "Atividades da Turma"}
-                {activeTab === "PORTFOLIO" && "Portfólio da Turma"}
-                {activeTab === "STUDENTS" && "Alunos Matriculados"}
-              </h1>
-              <p className="text-xs text-slate-550 font-medium mt-0.5">
-                {currentClass.name} • {filteredPhotos.length} fotos encontradas
-              </p>
-            </div>
-
-            {/* Filtros Rápidos de Fotos */}
-            {activeTab !== "STUDENTS" && (
-              <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
-                {/* Busca */}
-                <div className="relative w-full sm:w-auto">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-550" />
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Buscar foto..."
-                    className="w-full sm:w-48 pl-9 pr-4 py-1.5 bg-slate-900/40 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors text-xs"
-                  />
-                </div>
-
-                {/* Filtro por Aluno (Dropdown) */}
-                <div className="flex items-center gap-1.5 bg-slate-900/40 border border-slate-800 rounded-xl px-2.5 py-1.5 w-full sm:w-auto justify-between sm:justify-start">
-                  <span className="text-slate-500 text-xs flex items-center gap-1">
-                    <Users className="w-3.5 h-3.5 text-slate-500" />
-                    Filtrar Aluno:
-                  </span>
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === "ALL") {
-                        setSelectedFilterStudentIds([]);
-                      } else {
-                        const numVal = Number(val);
-                        if (numVal && !selectedFilterStudentIds.includes(numVal)) {
-                          setSelectedFilterStudentIds(prev => [...prev, numVal]);
-                        }
-                      }
-                      e.target.value = ""; // Reset
-                    }}
-                    className="bg-transparent border-none text-xs text-slate-300 focus:outline-none cursor-pointer pr-1 max-w-[120px]"
-                  >
-                    <option value="" disabled>Selecionar...</option>
-                    <option value="ALL">Todos</option>
-                    {students
-                      .filter(s => !selectedFilterStudentIds.includes(s.id))
-                      .map(s => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))
-                    }
-                  </select>
-                </div>
-
-                {/* Filtro por Status */}
-                <div className="flex items-center gap-1.5 bg-slate-900/40 border border-slate-800 rounded-xl px-2.5 py-1.5 w-full sm:w-auto justify-between sm:justify-start">
-                  <span className="text-slate-500 text-xs flex items-center gap-1">
-                    <Filter className="w-3.5 h-3.5" />
-                    Status:
-                  </span>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className="bg-transparent border-none text-xs text-slate-300 focus:outline-none cursor-pointer pr-1"
-                  >
-                    <option value="ALL">Todos</option>
-                    <option value="PENDING_REVIEW">Pendente de Revisão</option>
-                    <option value="APPROVED_FOR_MARKETING">Aprovado Marketing</option>
-                    <option value="PRIVATE_SCHOOL_ONLY">Privado Escola</option>
-                  </select>
-                </div>
-
-                {/* Ordenação */}
-                <div className="flex items-center gap-1.5 bg-slate-900/40 border border-slate-800 rounded-xl px-2.5 py-1.5 w-full sm:w-auto justify-between sm:justify-start">
-                  <span className="text-slate-500 text-xs flex items-center gap-1">
-                    <SlidersHorizontal className="w-3.5 h-3.5" />
-                    Ordem:
-                  </span>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value)}
-                    className="bg-transparent border-none text-xs text-slate-300 focus:outline-none cursor-pointer pr-1"
-                  >
-                    <option value="NEWEST">Mais Recentes</option>
-                    <option value="OLDEST">Mais Antigas</option>
-                  </select>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Render das tags dos alunos filtrados */}
-          {activeTab !== "STUDENTS" && selectedFilterStudentIds.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 items-center pt-2.5 border-t border-slate-900/60 w-full animate-fade-in">
-              <span className="text-[10px] font-bold text-slate-550 uppercase tracking-wider flex items-center gap-1">
-                <Tag className="w-3 h-3 text-indigo-400" />
-                Filtrando por:
-              </span>
-              {selectedFilterStudentIds.map(sid => {
-                const student = students.find(s => s.id === sid);
-                if (!student) return null;
-                return (
-                  <button
-                    key={sid}
-                    onClick={() => setSelectedFilterStudentIds(prev => prev.filter(id => id !== sid))}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-rose-500/10 hover:text-rose-450 hover:border-rose-500/20 transition-all cursor-pointer"
-                  >
-                    <span>{student.name}</span>
-                    <X className="w-2.5 h-2.5 ml-1 shrink-0 text-indigo-500" />
-                  </button>
-                );
-              })}
-              <button
-                onClick={() => setSelectedFilterStudentIds([])}
-                className="text-[10px] text-slate-550 hover:text-slate-300 underline cursor-pointer ml-2"
-              >
-                Limpar filtros
-              </button>
-            </div>
-          )}
-        </header>
-
-        {/* Corpo de Fotos/Alunos */}
-        <main className="flex-1 px-6 py-6 overflow-y-auto">
-          {activeTab === "STUDENTS" ? (
-            /* Renderiza Grid de Alunos */
-            <div className="space-y-6">
-              {/* Filtro de busca de alunos */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-slate-900/10 border border-slate-900/50 rounded-2xl p-4">
-                <div className="relative max-w-xs w-full">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    type="text"
-                    value={studentSearchTerm}
-                    onChange={(e) => setStudentSearchTerm(e.target.value)}
-                    placeholder="Filtrar aluno pelo nome..."
-                    className="w-full pl-9 pr-4 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors text-xs"
-                  />
-                </div>
-                <div className="text-xs text-slate-500">
-                  Total matriculados: <span className="font-semibold text-slate-300">{students.length}</span>
-                </div>
-              </div>
-
-              {filteredStudents.length === 0 ? (
-                <div className="p-12 border border-slate-900 border-dashed rounded-2xl text-center">
-                  <Users className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                  <h3 className="text-sm font-semibold text-slate-400">Nenhum aluno encontrado</h3>
-                  <p className="text-xs text-slate-600 mt-1">Refine seu termo de pesquisa.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {filteredStudents.map((student) => {
-                    const taggedCount = photos.filter(p => p.student_ids?.includes(student.id)).length;
-                    
-                    return (
-                      <div
-                        key={student.id}
-                        onClick={() => handleSelectStudentCard(student)}
-                        className="group bg-slate-900/30 border border-slate-900 hover:border-indigo-500/20 hover:bg-slate-900/55 rounded-2xl p-4 flex items-center justify-between gap-4 cursor-pointer transition-all hover:shadow-[0_4px_25px_rgba(79,70,229,0.08)]"
-                      >
-                        <div className="flex items-center gap-3">
-                          {/* Avatar com Gradiente */}
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-550/20 to-violet-550/20 border border-indigo-550/30 flex items-center justify-center font-bold text-indigo-400 text-sm group-hover:scale-105 transition-transform shrink-0">
-                            {student.name.substring(0, 2).toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <h4 className="font-semibold text-sm text-slate-200 group-hover:text-indigo-400 transition-colors truncate">
-                              {student.name}
-                            </h4>
-                            <p className="text-[10px] text-slate-500 mt-0.5">
-                              {taggedCount} {taggedCount === 1 ? 'foto marcada' : 'fotos marcadas'}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col items-end justify-center shrink-0">
-                          <span className={`w-2 h-2 rounded-full ${student.status === "ATIVO" ? "bg-emerald-550 animate-pulse" : "bg-slate-655"}`} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ) : (
-            /* Renderiza Fotos Agrupadas por Mês */
-            <div>
-              {photos.length === 0 ? (
-                <div className="p-12 border border-slate-900 border-dashed rounded-2xl text-center">
-                  <div className="inline-flex items-center justify-center p-3 bg-indigo-650/10 border border-indigo-650/20 text-indigo-400 rounded-xl mb-3">
-                    <ImageIcon className="w-6 h-6" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-slate-300">Nenhuma foto encontrada</h3>
-                  <p className="text-xs text-slate-550 mt-1">Esta turma ainda não possui fotos vinculadas.</p>
-                </div>
-              ) : filteredPhotos.length === 0 ? (
-                <div className="p-12 border border-slate-900 border-dashed rounded-2xl text-center">
-                  <h3 className="text-sm font-semibold text-slate-350">Nenhuma foto</h3>
-                  <p className="text-xs text-slate-550 mt-1">Nenhuma imagem corresponde aos filtros aplicados.</p>
-                </div>
-              ) : (
-                <div className="space-y-12">
-                  {monthKeys.map((monthKey) => (
-                    <section key={monthKey} data-month={monthKey} className="space-y-4">
-                      {/* Cabeçalho de Mês Sticky - Glassmorphism */}
-                      <div className="sticky top-0 bg-slate-950/90 border-b border-slate-900/50 backdrop-blur-md z-20 py-2.5 flex items-center gap-2 text-indigo-400 font-semibold text-xs tracking-widest uppercase">
-                        <Calendar className="w-4 h-4 text-indigo-500" />
-                        {monthKey}
-                      </div>
-
-                      {/* Grid de Imagens */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                        {groupedPhotos[monthKey].map((photo) => (
-                          <div 
-                            key={photo.id}
-                            onClick={() => setSelectedPhoto(photo)}
-                            className="group bg-slate-900/20 border border-slate-900 hover:border-slate-800 rounded-2xl overflow-hidden shadow-lg transition-all flex flex-col cursor-pointer hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)]"
-                          >
-                            {/* Visualização de Imagem */}
-                            <div className="relative aspect-video bg-slate-950 overflow-hidden flex items-center justify-center">
-                              <img
-                                src={`http://localhost:8000/api/photos/file/${photo.file_path}`}
-                                alt="Foto escolar"
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                loading="lazy"
-                              />
-                              
-                              <div className="absolute top-3 left-3 z-10">
-                                {getStatusBadge(photo.status)}
-                              </div>
-                            </div>
-
-                            {/* Alunos marcados na foto (em vez do título) */}
-                            <div className="p-3 bg-slate-900/40 flex-1 flex flex-col justify-end">
-                              {photo.student_ids && photo.student_ids.length > 0 ? (
-                                <div className="flex flex-wrap gap-1">
-                                  {photo.student_ids.map(sid => {
-                                    const student = students.find(s => s.id === sid);
-                                    if (!student) return null;
-                                    return (
-                                      <span key={sid} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 max-w-full truncate" title={student.name}>
-                                        <Tag className="w-2.5 h-2.5 text-indigo-500 mr-0.5 shrink-0" />
-                                        <span className="truncate">{student.name}</span>
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <span className="text-[10px] text-slate-600 italic">Sem alunos marcados</span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </main>
-      </div>
-
-      {/* Modal / Lightbox de Detalhes da Imagem */}
-      {selectedPhoto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-fade-in">
-          <div className="bg-slate-900 border border-slate-850 rounded-3xl overflow-hidden max-w-5xl w-full h-[85vh] flex flex-col md:flex-row shadow-2xl relative">
-            
-            {/* Fechar */}
-            <button
-              onClick={() => setSelectedPhoto(null)}
-              className="absolute top-4 right-4 z-50 p-2 bg-slate-950/80 border border-slate-800 hover:bg-slate-800 hover:text-slate-50 text-slate-400 rounded-full transition-colors cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            {/* Painel da Esquerda (Imagem Grande) */}
-            <div className="flex-1 bg-slate-950 relative flex items-center justify-center overflow-hidden border-b md:border-b-0 md:border-r border-slate-850">
-              <img
-                src={`http://localhost:8000/api/photos/file/${selectedPhoto.file_path}`}
-                alt={selectedPhoto.title || "Foto escolar"}
-                className="max-w-full max-h-full object-contain"
-              />
-              
-              {/* Botão de Download */}
-              <a
-                href={`http://localhost:8000/api/photos/file/${selectedPhoto.file_path}`}
-                target="_blank"
-                rel="noreferrer"
-                download={selectedPhoto.file_path}
-                className="absolute bottom-4 left-4 p-2.5 bg-slate-950/80 hover:bg-indigo-600 border border-slate-800 text-slate-200 hover:text-white rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs font-semibold shadow-lg"
-              >
-                <Download className="w-4 h-4" />
-                <span>Baixar Imagem</span>
-              </a>
-            </div>
-
-            {/* Painel da Direita (Infos, Tags de Alunos, Ações de Status) */}
-            <div className="w-full md:w-96 p-6 flex flex-col h-full overflow-y-auto bg-slate-900/90">
-              <div className="mb-6">
-                <span className="mb-2 block">{getStatusBadge(selectedPhoto.status)}</span>
-                <h3 className="text-base font-bold text-slate-100 leading-snug">
-                  {selectedPhoto.title || "Foto Escolar"}
-                </h3>
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Arquivo: <span className="font-mono text-[9px] text-indigo-400">{selectedPhoto.file_id}</span>
-                </p>
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  Registrado em: {new Date(selectedPhoto.created_at).toLocaleDateString("pt-BR", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit"
-                  })}
-                </p>
-              </div>
-
-              {/* Seção de Marcação de Alunos (Tags) */}
-              <div className="flex-1 flex flex-col min-h-0 border-t border-slate-850 pt-4">
-                <h4 className="text-xs font-bold text-indigo-400 tracking-wider uppercase flex items-center gap-1.5 mb-3">
-                  <Tag className="w-3.5 h-3.5 text-indigo-500" />
-                  Alunos Marcados nesta Foto
-                </h4>
-                
-                {/* Lista rolável de alunos da turma */}
-                <div className="flex-1 overflow-y-auto pr-1 space-y-1.5">
-                  {students.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">Carregando lista de alunos...</p>
-                  ) : (
-                    students.map((student) => {
-                      const isTagged = selectedPhoto.student_ids?.includes(student.id);
-                      const isLoading = taggingLoadingId === student.id;
-
-                      return (
-                        <button
-                          key={student.id}
-                          disabled={user?.role === "MARKETING"}
-                          onClick={() => handleToggleTagStudent(student.id)}
-                          className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center justify-between border cursor-pointer transition-all ${
-                            isTagged
-                              ? "bg-indigo-600/10 border-indigo-500/30 text-indigo-350 font-medium"
-                              : "bg-slate-950/20 border-slate-900 text-slate-400 hover:bg-slate-800/30"
-                          } ${user?.role === "MARKETING" ? "pointer-events-none" : ""}`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-all ${
-                              isTagged ? "bg-indigo-500 border-indigo-450 text-white" : "border-slate-800 bg-slate-950"
-                            }`}>
-                              {isTagged && <Check className="w-2.5 h-2.5" />}
-                            </div>
-                            <span className="truncate max-w-[150px]">{student.name}</span>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {isLoading && (
-                              <Loader2 className="w-3 animate-spin text-indigo-500" />
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* Ações Administrativas de Status (Apenas ADMIN, DIRETOR, COORDENADOR) */}
-              {["ADMIN", "DIRETOR", "COORDENADOR"].includes(user?.role || "") && (
-                <div className="mt-4 pt-4 border-t border-slate-850 shrink-0 space-y-2">
-                  <p className="text-[9px] font-bold text-slate-500 tracking-wider uppercase">
-                    Gerenciamento (Direção / Coordenação)
-                  </p>
-                  
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      disabled={statusUpdating}
-                      onClick={() => handleUpdateStatus("APPROVED_FOR_MARKETING")}
-                      className={`py-2 px-3 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5 border ${
-                        selectedPhoto.status === "APPROVED_FOR_MARKETING"
-                          ? "bg-emerald-600 border-emerald-500 text-white shadow-[0_0_15px_-3px_rgba(16,185,129,0.25)]"
-                          : "bg-slate-950 border-slate-900 text-emerald-450 hover:bg-emerald-500/10"
-                      }`}
-                      title="Aprovar para Marketing"
-                    >
-                      {statusUpdating ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <>
-                          <Check className="w-3.5 h-3.5" />
-                          Liberar Mkt
-                        </>
-                      )}
-                    </button>
-
-                    <button
-                      disabled={statusUpdating}
-                      onClick={() => handleUpdateStatus("PRIVATE_SCHOOL_ONLY")}
-                      className={`py-2 px-3 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5 border ${
-                        selectedPhoto.status === "PRIVATE_SCHOOL_ONLY"
-                          ? "bg-sky-600 border-sky-500 text-white shadow-[0_0_15px_-3px_rgba(14,165,233,0.25)]"
-                          : "bg-slate-950 border-slate-900 text-sky-400 hover:bg-sky-500/10"
-                      }`}
-                    >
-                      {statusUpdating ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <>
-                          <Lock className="w-3.5 h-3.5" />
-                          Privado
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {(modal === "post" || modal === "portfolio") && <ActionModal kind={modal} photos={photos.filter((photo) => actionPhotoIds.includes(photo.id))} students={students} selectedStudents={selectedStudents} onToggleStudent={toggleStudent} caption={caption} setCaption={setCaption} portfolioTitle={portfolioTitle} setPortfolioTitle={setPortfolioTitle} portfolioDescription={portfolioDescription} setPortfolioDescription={setPortfolioDescription} objectives={objectives} setObjectives={setObjectives} saving={saving} onClose={() => setModal(null)} onSave={modal === "post" ? savePost : savePortfolio} />}
+      {modal === "family" && familyStudent && <FamilyModal student={familyStudent} families={families} selected={familyChildId} setSelected={setFamilyChildId} saving={saving} onClose={() => setModal(null)} onSave={saveFamilyLink} onCreate={createFamilyProfile} />}
     </div>
   );
+}
+
+function PhotoDetails({ photo, students, tags, onTag }: { photo: Photo | null; students: Student[]; tags: Tag[]; onTag: (tagId: number, remove: boolean) => void }) {
+  if (!photo) return <aside className="h-fit rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm"><Info className="mb-2 h-5 w-5" />Selecione uma foto para ver os detalhes.</aside>;
+  const names = students.filter((student) => photo.student_ids.includes(student.id)).map((student) => student.name);
+  return <aside className="h-fit rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:sticky xl:top-5">
+    <div className="mb-3 flex items-center gap-2"><Info className="h-5 w-5 text-blue-600" /><h2 className="font-semibold">Informações da foto</h2></div>
+    <div className="relative mb-4 aspect-[4/3] overflow-hidden rounded-xl bg-slate-100"><Image src={photoUrl(photo)} alt={photo.title ?? "Foto"} fill unoptimized className="object-cover" /></div>
+    <dl className="space-y-3 text-sm">
+      <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Data</dt><dd>{new Date(photo.created_at).toLocaleString("pt-BR")}</dd></div>
+      <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Enviada por</dt><dd>{photo.uploader_name ?? "Equipe escolar"}</dd></div>
+      <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Alunos</dt><dd>{names.length ? names.join(", ") : "Ainda não identificados"}</dd></div>
+      {photo.description && <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Descrição</dt><dd>{photo.description}</dd></div>}
+    </dl>
+    <div className="mt-5 border-t border-slate-200 pt-4"><p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Tags</p><div className="flex flex-wrap gap-2">{tags.map((tag) => { const active = photo.tags.some((item) => item.id === tag.id); return <button key={tag.id} onClick={() => void onTag(tag.id, active)} className={`rounded-full border px-2.5 py-1 text-xs ${active ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-300 text-slate-500 hover:bg-slate-50"}`}><TagIcon className="mr-1 inline h-3 w-3" />{tag.name}{active && <X className="ml-1 inline h-3 w-3" />}</button>; })}</div></div>
+  </aside>;
+}
+
+function ActionModal(props: {
+  kind: "post" | "portfolio"; photos: Photo[]; students: Student[]; selectedStudents: number[];
+  onToggleStudent: (id: number) => void; caption: string; setCaption: (value: string) => void;
+  portfolioTitle: string; setPortfolioTitle: (value: string) => void;
+  portfolioDescription: string; setPortfolioDescription: (value: string) => void;
+  objectives: string; setObjectives: (value: string) => void; saving: boolean; onClose: () => void; onSave: () => void;
+}) {
+  const isPost = props.kind === "post";
+  const valid = props.selectedStudents.length > 0 && (isPost ? props.caption.trim() : props.portfolioTitle.trim() && props.portfolioDescription.trim());
+  return <Modal title={isPost ? "Criar publicação" : "Criar portfólio"} onClose={props.onClose}>
+    <div className="mb-4 flex gap-2 overflow-x-auto pb-1">{props.photos.map((photo) => <div key={photo.id} className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg"><Image src={photoUrl(photo)} alt="Selecionada" fill unoptimized className="object-cover" /></div>)}</div>
+    <p className="mb-4 text-xs text-slate-500">{props.photos.length > 1 ? `${props.photos.length} fotos — será exibido como carrossel.` : "1 foto selecionada."}</p>
+    {isPost ? <Field label="Legenda"><textarea value={props.caption} onChange={(event) => props.setCaption(event.target.value)} rows={4} className="input w-full resize-none" placeholder="Conte o que aconteceu nesta atividade..." /></Field> : <><Field label="Título"><input value={props.portfolioTitle} onChange={(event) => props.setPortfolioTitle(event.target.value)} className="input w-full" placeholder="Ex.: Descobrindo as cores" /></Field><Field label="Descrição"><textarea value={props.portfolioDescription} onChange={(event) => props.setPortfolioDescription(event.target.value)} rows={3} className="input w-full resize-none" /></Field><Field label="Objetivos pedagógicos (um por linha)"><textarea value={props.objectives} onChange={(event) => props.setObjectives(event.target.value)} rows={3} className="input w-full resize-none" /></Field></>}
+    <p className="mb-2 text-sm font-medium">Alunos</p>
+    <div className="mb-5 max-h-48 space-y-1 overflow-y-auto rounded-xl border border-slate-200 p-2">{props.students.map((student) => <label key={student.id} className={`flex items-center gap-3 rounded-lg p-2 text-sm ${student.child_id ? "cursor-pointer hover:bg-slate-50" : "cursor-not-allowed bg-slate-50 text-slate-400"}`}><input type="checkbox" disabled={!student.child_id} checked={props.selectedStudents.includes(student.id)} onChange={() => props.onToggleStudent(student.id)} /><span className="flex-1">{student.name}</span>{!student.child_id && <span className="text-[10px]">sem vínculo familiar</span>}</label>)}</div>
+    <button onClick={props.onSave} disabled={props.saving || !valid} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{props.saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : isPost ? <Send className="h-4 w-4" /> : <FileImage className="h-4 w-4" />}{isPost ? "Publicar para as famílias" : "Criar portfólio"}</button>
+  </Modal>;
+}
+
+function FamilyModal({ student, families, selected, setSelected, saving, onClose, onSave, onCreate }: { student: Student; families: FamilyChild[]; selected: string; setSelected: (value: string) => void; saving: boolean; onClose: () => void; onSave: () => void; onCreate: (payload: { parent_name: string; parent_email: string; parent_phone: string; initial_password: string }) => Promise<void> }) {
+  const available = families.filter((family) => !family.linked_student_id || family.linked_student_id === student.id);
+  const family = families.find((item) => item.id === selected);
+  const [parentName, setParentName] = useState("");
+  const [parentEmail, setParentEmail] = useState("");
+  const [parentPhone, setParentPhone] = useState("");
+  const [initialPassword, setInitialPassword] = useState("");
+  const canCreate = parentName.trim().length >= 2 && parentEmail.includes("@") && initialPassword.length >= 6;
+  return <Modal title={`Vincular ${student.name}`} onClose={onClose}>
+    <p className="mb-4 text-sm text-slate-600">Escolha o perfil da criança que já pertence à conta de um responsável no TinhaKids.</p>
+    <select value={selected} onChange={(event) => setSelected(event.target.value)} className="input mb-4 w-full"><option value="">Sem vínculo</option>{available.map((item) => <option key={item.id} value={item.id}>{item.name} — {item.classroom}</option>)}</select>
+    {family && <div className="mb-5 rounded-xl bg-slate-50 p-3 text-sm"><p className="font-medium">Responsáveis</p><p className="mt-1 text-slate-600">{family.parent_names.join(", ") || "Nome não informado"}</p><p className="text-xs text-slate-500">{family.parent_emails.join(", ")}</p></div>}
+    <button onClick={onSave} disabled={saving || !selected} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white disabled:opacity-50">{saving && <LoaderCircle className="h-4 w-4 animate-spin" />}Usar perfil existente</button>
+    {!student.child_id && <><div className="my-5 flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-slate-400"><span className="h-px flex-1 bg-slate-200" />ou cadastre a família<span className="h-px flex-1 bg-slate-200" /></div>
+      <div className="grid gap-3 sm:grid-cols-2"><input className="input" value={parentName} onChange={(event) => setParentName(event.target.value)} placeholder="Nome do responsável" /><input className="input" type="email" value={parentEmail} onChange={(event) => setParentEmail(event.target.value)} placeholder="E-mail" /><input className="input" value={parentPhone} onChange={(event) => setParentPhone(event.target.value)} placeholder="Telefone (opcional)" /><input className="input" type="password" value={initialPassword} onChange={(event) => setInitialPassword(event.target.value)} placeholder="Senha inicial (mín. 6)" /></div>
+      <p className="my-3 text-xs text-slate-500">A conta fica ativa imediatamente e o responsável já pode entrar no TinhaKids com o e-mail e a senha inicial.</p>
+      <button onClick={() => void onCreate({ parent_name: parentName, parent_email: parentEmail, parent_phone: parentPhone, initial_password: initialPassword })} disabled={saving || !canCreate} className="flex w-full items-center justify-center gap-2 rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700 disabled:opacity-50">{saving && <LoaderCircle className="h-4 w-4 animate-spin" />}Cadastrar e vincular</button></>}
+  </Modal>;
+}
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4" onMouseDown={onClose}><div onMouseDown={(event) => event.stopPropagation()} className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl"><div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-semibold">{title}</h2><button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>{children}</div></div>;
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="mb-4 block"><span className="mb-1.5 block text-sm font-medium">{label}</span>{children}</label>;
+}
+
+function EmptyPhotos() {
+  return <div className="grid min-h-56 place-items-center rounded-xl border border-dashed border-slate-300 text-center text-sm text-slate-500"><div><ImageIcon className="mx-auto mb-2 h-8 w-8" />Aguardando o primeiro envio do Tinhaphone.</div></div>;
 }

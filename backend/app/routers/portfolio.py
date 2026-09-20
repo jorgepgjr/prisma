@@ -24,11 +24,13 @@ def get_portfolio(
         except Exception:
             pedagogical_objectives = [project.pedagogical_objectives]
 
+        paths = [photo.file_path for photo in project.photos] or [project.image_path]
         proj_dict = {
             "id": project.id,
             "child_id": project.child_id,
             "title": project.title,
-            "image_url": security.generatePresignedUrl(project.image_path),
+            "image_url": security.generatePresignedUrl(paths[0]),
+            "image_urls": [security.generatePresignedUrl(path) for path in paths],
             "completion_date": project.completion_date,
             "description": project.description,
             "pedagogical_objectives": pedagogical_objectives,

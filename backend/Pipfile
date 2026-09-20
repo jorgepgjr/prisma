@@ -6,6 +6,7 @@ name = "pypi"
 [packages]
 fastapi = "*"
 uvicorn = {extras = ["standard"], version = "*"}
+uvloop = {version = "*", markers = "sys_platform != 'win32'"}
 sqlalchemy = "*"
 psycopg2-binary = "*"
 passlib = {extras = ["bcrypt"], version = "*"}
@@ -17,6 +18,8 @@ sqladmin = "*"
 faker = "*"
 google-auth = "*"
 requests = "*"
+pillow = "*"
+pillow-heif = "*"
 
 [dev-packages]
 

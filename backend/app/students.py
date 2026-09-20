@@ -43,7 +43,8 @@ def get_students_by_class(
             name=s.name,
             class_id=s.class_id,
             marketing_allowed=s.marketing_allowed,
-            status=s.status.value
+            status=s.status.value,
+            child_id=s.child_profile.id if s.child_profile else None,
         ) for s in students
     ]
 

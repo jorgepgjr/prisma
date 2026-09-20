@@ -12,6 +12,9 @@ from .routers.children import router as children_router
 from .routers.posts import router as posts_router
 from .routers.portfolio import router as portfolio_router
 from .routers.media import router as media_router
+from .publishing import router as publishing_router
+from .families import router as families_router
+from .school_portfolio import router as school_portfolio_router
 from .admin import setup_admin
 
 # Cria as tabelas do banco de dados (útil para desenvolvimento, 
@@ -53,6 +56,7 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,6 +68,9 @@ app.include_router(photos_router, prefix="/api/photos", tags=["Fotos"])
 app.include_router(classes_router, prefix="/api/classes", tags=["Turmas"])
 app.include_router(students_router, prefix="/api/students", tags=["Alunos"])
 app.include_router(tags_router, prefix="/api/tags", tags=["Tags"])
+app.include_router(publishing_router, prefix="/api/posts", tags=["Publicações"])
+app.include_router(families_router, prefix="/api/families", tags=["Famílias"])
+app.include_router(school_portfolio_router, prefix="/api/portfolio", tags=["Portfólios"])
 
 # TinhaKids API v1 (Visão dos Pais)
 app.include_router(auth_parents_router, prefix="/api/v1/auth", tags=["TinhaKids - Auth"])

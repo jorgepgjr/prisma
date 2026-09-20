@@ -133,6 +133,21 @@ def seed_data():
         # 5. Criação de Alunos (Students)
         # 5 a 10 alunos por turma, com 70% de chance de autorização LGPD para marketing
         alunos_totais = 0
+        grupo2 = next(t for t in turmas if t.name == "Grupo 2")
+        aluno_pedro = Student(
+            name="Pedro",
+            class_id=grupo2.id,
+            marketing_allowed=True,
+            status=StudentStatusEnum.ATIVO,
+        )
+        aluno_sofia = Student(
+            name="Sofia",
+            class_id=grupo2.id,
+            marketing_allowed=True,
+            status=StudentStatusEnum.ATIVO,
+        )
+        session.add_all([aluno_pedro, aluno_sofia])
+        alunos_totais += 2
         for turma in turmas:
             num_alunos = random.randint(5, 10)
             for _ in range(num_alunos):
@@ -253,10 +268,11 @@ def seed_data():
         )
         
         parent.children.extend([child_pedro, child_sofia])
-        session.add_all([child_pedro, child_sofia])
+        aluno_pedro.child_profile = child_pedro
+        aluno_sofia.child_profile = child_sofia
         
         # Posts
-        now = datetime.utcnow()
+        now = datetime.now()
         posts_data = [
             ("post_1", [child_pedro, child_sofia], "https://images.unsplash.com/photo-1513364776144-60967b0f800f?auto=format&fit=crop&q=80&w=800", "Hoje aprendemos sobre as cores usando tinta guache! 🎨 As crianças misturaram as cores primárias para ver novas cores surgindo. Foi uma festa de criatividade e descobertas!", now - timedelta(hours=2)),
             ("post_2", [child_pedro], "https://images.unsplash.com/photo-1515488042361-404e9250afef?auto=format&fit=crop&q=80&w=800", "O Pedro ficou super concentrado montando a maior torre de blocos hoje! 🧱 Ele trabalhou muito bem o equilíbrio e a noção de espaço.", now - timedelta(hours=4)),

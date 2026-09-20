@@ -45,6 +45,32 @@ photo_tag_link = Table(
     Column('tag_id', Integer, ForeignKey('tags.id'), primary_key=True)
 )
 
+# Uma publicação ou item de portfólio pode conter várias fotos. As colunas
+# legadas image_path continuam como capa/fallback para dados já existentes.
+post_photo_link = Table(
+    'post_photo_link',
+    Base.metadata,
+    Column('post_id', String, ForeignKey('posts.id', ondelete="CASCADE"), primary_key=True),
+    Column('photo_id', Integer, ForeignKey('photos.id', ondelete="CASCADE"), primary_key=True),
+)
+
+project_photo_link = Table(
+    'project_photo_link',
+    Base.metadata,
+    Column('project_id', String, ForeignKey('projects.id', ondelete="CASCADE"), primary_key=True),
+    Column('photo_id', Integer, ForeignKey('photos.id', ondelete="CASCADE"), primary_key=True),
+)
+
+# Vínculo explícito entre o cadastro escolar e o perfil visto pela família.
+# Uma tabela separada atualiza instalações existentes com create_all sem uma
+# migração destrutiva das tabelas students e children.
+student_child_link = Table(
+    'student_child_link',
+    Base.metadata,
+    Column('student_id', Integer, ForeignKey('students.id', ondelete="CASCADE"), primary_key=True),
+    Column('child_id', String, ForeignKey('children.id', ondelete="CASCADE"), primary_key=True, unique=True)
+)
+
 class Tag(Base):
     __tablename__ = 'tags'
 
@@ -100,6 +126,9 @@ class Student(Base):
 
     school_class = relationship("Class", back_populates="students")
     photos = relationship("Photo", secondary=photo_student_link, back_populates="students")
+    child_profile = relationship(
+        "Child", secondary=student_child_link, back_populates="student_profile", uselist=False
+    )
 
 
 class Photo(Base):
@@ -118,6 +147,8 @@ class Photo(Base):
     school_class = relationship("Class", back_populates="photos")
     students = relationship("Student", secondary=photo_student_link, back_populates="photos")
     tags = relationship("Tag", secondary=photo_tag_link, back_populates="photos")
+    posts = relationship("Post", secondary=post_photo_link, back_populates="photos")
+    projects = relationship("Project", secondary=project_photo_link, back_populates="photos")
 
 # Tabela Associativa N:N Parent -> Child
 parent_child_link = Table(
@@ -160,6 +191,9 @@ class Child(Base):
     parents = relationship("Parent", secondary=parent_child_link, back_populates="children")
     posts = relationship("Post", secondary=post_child_link, back_populates="children")
     projects = relationship("Project", back_populates="child")
+    student_profile = relationship(
+        "Student", secondary=student_child_link, back_populates="child_profile", uselist=False
+    )
 
 class Post(Base):
     __tablename__ = 'posts'
@@ -172,6 +206,7 @@ class Post(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     children = relationship("Child", secondary=post_child_link, back_populates="posts")
+    photos = relationship("Photo", secondary=post_photo_link, back_populates="posts")
 
 class Project(Base):
     __tablename__ = 'projects'
@@ -185,3 +220,4 @@ class Project(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     child = relationship("Child", back_populates="projects")
+    photos = relationship("Photo", secondary=project_photo_link, back_populates="projects")

@@ -62,7 +62,9 @@ class PhotoResponse(BaseModel):
     id: int
     file_path: str
     title: Optional[str] = None
+    description: Optional[str] = None
     uploaded_by_user_id: int
+    uploader_name: Optional[str] = None
     class_id: Optional[int] = None
     status: str
     created_at: datetime
@@ -84,6 +86,7 @@ class StudentCreate(StudentBase):
 class StudentResponse(StudentBase):
     id: int
     status: str
+    child_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -93,6 +96,24 @@ class PhotoStatusUpdate(BaseModel):
 
 class PhotoTagStudents(BaseModel):
     student_ids: List[int]
+
+class StudentFamilyLink(BaseModel):
+    child_id: Optional[str] = None
+
+class FamilyChildResponse(BaseModel):
+    id: str
+    name: str
+    classroom: str
+    avatar_url: str
+    parent_names: List[str] = []
+    parent_emails: List[str] = []
+    linked_student_id: Optional[int] = None
+
+class FamilyAccountCreate(BaseModel):
+    parent_name: str
+    parent_email: EmailStr
+    parent_phone: Optional[str] = None
+    initial_password: Optional[str] = None
 
 # --- TinhaKids API Schemas (Parents View) ---
 
@@ -124,17 +145,28 @@ class PostResponse(BaseModel):
     teacher_name: str
     teacher_avatar_url: str
     image_url: str # This will be the presigned URL
+    image_urls: List[str] = []
     caption: str
     created_at: datetime
     
     class Config:
         from_attributes = True
 
+class PostCreate(BaseModel):
+    photo_ids: List[int]
+    caption: str
+    student_ids: List[int]
+
+class ManagedPostResponse(PostResponse):
+    photo_id: Optional[int] = None
+    child_names: List[str] = []
+
 class ProjectResponse(BaseModel):
     id: str
     child_id: str
     title: str
     image_url: str # Presigned URL
+    image_urls: List[str] = []
     completion_date: datetime
     description: str
     pedagogical_objectives: List[str]
@@ -142,3 +174,10 @@ class ProjectResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+class PortfolioCreate(BaseModel):
+    photo_ids: List[int]
+    student_ids: List[int]
+    title: str
+    description: str
+    pedagogical_objectives: List[str] = []

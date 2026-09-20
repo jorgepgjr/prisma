@@ -78,7 +78,9 @@ def login(req: LoginRequest, session: Session = Depends(db.get_db)):
     if not parent.hashed_password or not security.verify_password(req.password, parent.hashed_password):
         raise HTTPException(status_code=401, detail="Credenciais inválidas.")
         
-    access_token = security.create_access_token(data={"sub": parent.id})
+    access_token = security.create_access_token(
+        data={"sub": parent.id}, expires_delta=timedelta(days=30)
+    )
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/google", response_model=Token)
@@ -100,5 +102,7 @@ def google_login(req: GoogleLogin, session: Session = Depends(db.get_db)):
     parent.is_active = True
     session.commit()
     
-    access_token = security.create_access_token(data={"sub": parent.id})
+    access_token = security.create_access_token(
+        data={"sub": parent.id}, expires_delta=timedelta(days=30)
+    )
     return {"access_token": access_token, "token_type": "bearer"}

@@ -74,6 +74,8 @@ def generatePresignedUrl(image_path: str) -> str:
     which will be verified by the /api/v1/media endpoint.
     Returns the path directly if it is an external URL (http/https).
     """
+    if not image_path:
+        return ""
     if image_path.startswith("http://") or image_path.startswith("https://"):
         return image_path
         
