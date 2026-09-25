@@ -7,7 +7,7 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}Iniciando o Backend (FastAPI)...${NC}"
 cd backend
-pipenv run uvicorn app.main:app --reload &
+pipenv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 cd ..
 
@@ -17,10 +17,12 @@ npm run dev &
 FRONTEND_PID=$!
 cd ..
 
+LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "localhost")
+
 echo -e "\n======================================================="
 echo -e "🚀 Serviços iniciados!"
-echo -e "   - Backend: http://localhost:8000"
-echo -e "   - Frontend: http://localhost:3000"
+echo -e "   - Backend:  http://localhost:8000 (Rede: http://${LOCAL_IP}:8000)"
+echo -e "   - Frontend: http://localhost:3000 (Rede: http://${LOCAL_IP}:3000)"
 echo -e "   Pressione [CTRL+C] para encerrar ambos os serviços."
 echo -e "=======================================================\n"
 
