@@ -20,6 +20,8 @@ google-auth = "*"
 requests = "*"
 pillow = "*"
 pillow-heif = "*"
+numpy = "*"
+scikit-learn = "*"
 
 [dev-packages]
 
