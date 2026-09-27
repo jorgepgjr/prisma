@@ -132,24 +132,41 @@ def ingest_test_folder(
     first_user = session.query(models.User).first()
     uploader_id = first_user.id if first_user else 1
 
-    files_in_dir = os.listdir(TEST_IMAGES_DIR)
-    image_files = [f for f in files_in_dir if os.path.splitext(f.lower())[1] in VALID_IMAGE_EXTENSIONS]
+    import zipfile
 
-    if not image_files:
+    # Descompacta arquivos .zip encontrados na pasta de testes
+    for item in os.listdir(TEST_IMAGES_DIR):
+        if item.lower().endswith(".zip"):
+            zip_path = os.path.join(TEST_IMAGES_DIR, item)
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(TEST_IMAGES_DIR)
+            except Exception as e:
+                print(f"Aviso ao extrair {item}: {e}")
+
+    # Varre recursivamente arquivos de imagem na pasta de testes
+    image_paths = []
+    for root, dirs, files in os.walk(TEST_IMAGES_DIR):
+        # Ignora arquivos de sistema como __MACOSX ou .DS_Store
+        if "__MACOSX" in root:
+            continue
+        for f in files:
+            if not f.startswith(".") and os.path.splitext(f.lower())[1] in VALID_IMAGE_EXTENSIONS:
+                image_paths.append(os.path.join(root, f))
+
+    if not image_paths:
         return schemas.IngestTestFolderResponse(
             imported_count=0,
             skipped_count=0,
             total_found=0,
-            message="Nenhuma imagem encontrada em test_images/ (formatos aceitos: jpg, png, webp, heic, avif)."
+            message="Nenhuma imagem encontrada em test_images/ (formatos aceitos: jpg, png, webp, heic, avif, zip)."
         )
 
     imported = 0
     skipped = 0
 
-    for filename in image_files:
-        source_path = os.path.join(TEST_IMAGES_DIR, filename)
-        if not os.path.isfile(source_path):
-            continue
+    for source_path in image_paths:
+        filename = os.path.basename(source_path)
 
         # Nome de destino único para evitar colisões
         base_name, ext = os.path.splitext(filename)
