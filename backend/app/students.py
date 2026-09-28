@@ -92,3 +92,38 @@ def create_student(
         marketing_allowed=new_student.marketing_allowed,
         status=new_student.status.value
     )
+
+
+@router.get("/{student_id}/photos", response_model=List[schemas.PhotoResponse])
+def get_student_photos(
+    student_id: int,
+    session: Session = Depends(get_db),
+):
+    """
+    Retorna todas as fotos em que o aluno foi identificado (via vínculo direto ou cluster de faces).
+    """
+    from .photos import serialize_photo
+    from .models import Photo, FaceCluster, DetectedFace
+
+    student = session.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno não encontrado.")
+
+    # 1. Fotos vinculadas diretamente
+    direct_photo_ids = set(p.id for p in student.photos)
+
+    # 2. Fotos identificadas através dos clusters de faces associados ao aluno
+    cluster_photo_ids = set()
+    clusters = session.query(FaceCluster).filter(FaceCluster.student_id == student_id).all()
+    for c in clusters:
+        for f in c.faces:
+            if f.photo_id:
+                cluster_photo_ids.add(f.photo_id)
+
+    all_photo_ids = direct_photo_ids.union(cluster_photo_ids)
+    if not all_photo_ids:
+        return []
+
+    photos = session.query(Photo).filter(Photo.id.in_(all_photo_ids)).order_by(Photo.created_at.desc()).all()
+    return [serialize_photo(p) for p in photos]
+
