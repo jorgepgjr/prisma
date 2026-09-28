@@ -132,10 +132,11 @@ class FaceAnalysisEngine:
 def cluster_embeddings(
     new_embeddings: List[List[float]],
     existing_clusters: List[Dict[str, Any]],
-    distance_threshold: float = 0.40,
+    distance_threshold: float = 0.48,
 ) -> Tuple[List[Optional[str]], List[List[int]]]:
     """
     Agrupa novos embeddings relacionando-os com clusters existentes ou criando novos grupos via DBSCAN.
+    Utiliza distância de cosseno calibrada (threshold ~0.48) e comparação com centroides dos clusters.
     
     Retorna:
     - assigned_cluster_ids: lista com o cluster_id atribuído para cada embedding novo (ou None se for criar novo)
@@ -147,7 +148,12 @@ def cluster_embeddings(
     if not new_embeddings:
         return [], []
 
-    new_vecs = np.array(new_embeddings)
+    new_vecs = np.array(new_embeddings, dtype=np.float32)
+    # Normalização L2 para precisão no cálculo de cosseno
+    norms = np.linalg.norm(new_vecs, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    new_vecs = new_vecs / norms
+
     assigned_cluster_ids: List[Optional[str]] = [None] * len(new_embeddings)
     unassigned_indices = list(range(len(new_embeddings)))
 
@@ -161,12 +167,27 @@ def cluster_embeddings(
             for cluster in existing_clusters:
                 c_embeddings = cluster.get("embeddings")  # List of vectors in this cluster
                 if c_embeddings:
-                    c_mat = np.array(c_embeddings)
-                    # Distância de cosseno mínima ou média para o cluster
-                    dists = cosine_distances(vec, c_mat)[0]
-                    min_dist = float(np.min(dists))
-                    if min_dist < best_dist:
-                        best_dist = min_dist
+                    c_mat = np.array(c_embeddings, dtype=np.float32)
+                    c_norms = np.linalg.norm(c_mat, axis=1, keepdims=True)
+                    c_norms[c_norms == 0] = 1.0
+                    c_mat = c_mat / c_norms
+
+                    # Calcula centroide do cluster
+                    centroid = np.mean(c_mat, axis=0, keepdims=True)
+                    centroid_norm = np.linalg.norm(centroid)
+                    if centroid_norm > 0:
+                        centroid = centroid / centroid_norm
+
+                    # Distância para o centroide e distância mínima para qualquer membro
+                    dist_centroid = float(cosine_distances(vec, centroid)[0][0])
+                    dists_members = cosine_distances(vec, c_mat)[0]
+                    min_dist_member = float(np.min(dists_members))
+
+                    # Distância efetiva (combinação de vizinho mais próximo e centroide)
+                    effective_dist = min(dist_centroid, min_dist_member)
+
+                    if effective_dist < best_dist:
+                        best_dist = effective_dist
                         best_cluster_id = cluster["id"]
 
             if best_dist <= distance_threshold and best_cluster_id is not None:
@@ -194,6 +215,7 @@ def cluster_embeddings(
             new_groups = list(group_map.values())
 
     return assigned_cluster_ids, new_groups
+
 
 
 def process_image_batch(session, batch_size: int = 10) -> int:
@@ -374,4 +396,79 @@ def sync_cluster_student_links(session):
                 face.photo.students.append(student)
 
     session.commit()
+
+
+def recluster_all_faces(session, distance_threshold: float = 0.48) -> Dict[str, Any]:
+    """
+    Executa agrupamento global de todas as faces detectadas no banco de dados.
+    Preserva os vínculos de alunos já existentes onde possível.
+    """
+    from . import models
+    from sklearn.cluster import DBSCAN
+
+    all_faces = session.query(models.DetectedFace)\
+        .filter(models.DetectedFace.embedding != None)\
+        .all()
+
+    if not all_faces:
+        return {"total_faces": 0, "clusters_created": 0}
+
+    # Guarda mapeamento de student_id por cluster anterior
+    student_map = {}
+    for c in session.query(models.FaceCluster).all():
+        if c.student_id:
+            for f in c.faces:
+                student_map[f.id] = c.student_id
+
+    # Remove todos os clusters antigos
+    for f in all_faces:
+        f.cluster_id = None
+    session.query(models.FaceCluster).delete()
+    session.commit()
+
+    embeddings = np.array([f.embedding for f in all_faces], dtype=np.float32)
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    embeddings = embeddings / norms
+
+    db = DBSCAN(eps=distance_threshold, min_samples=1, metric="cosine")
+    labels = db.fit_predict(embeddings)
+
+    group_map: Dict[int, List[int]] = {}
+    for idx, label in enumerate(labels):
+        if label not in group_map:
+            group_map[label] = []
+        group_map[label].append(idx)
+
+    clusters_created = 0
+    for label, indices in group_map.items():
+        new_cluster_id = uuid.uuid4().hex
+
+        # Verifica se alguma face desse grupo já tinha aluno associado
+        inherited_student_id = None
+        for i in indices:
+            face_id = all_faces[i].id
+            if face_id in student_map:
+                inherited_student_id = student_map[face_id]
+                break
+
+        new_cluster = models.FaceCluster(
+            id=new_cluster_id,
+            student_id=inherited_student_id,
+            name=f"Pessoa #{new_cluster_id[:6]}",
+        )
+        session.add(new_cluster)
+        clusters_created += 1
+
+        for i in indices:
+            all_faces[i].cluster_id = new_cluster_id
+
+    session.commit()
+    sync_cluster_student_links(session)
+
+    return {
+        "total_faces": len(all_faces),
+        "clusters_created": clusters_created,
+    }
+
 

@@ -20,7 +20,9 @@ import {
   Eye,
   X,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Filter,
+  Users
 } from "lucide-react";
 import { useAuth } from "../../../context/AuthContext";
 
@@ -50,6 +52,18 @@ interface ProcessingPhoto {
   detected_faces: DetectedFace[];
 }
 
+interface FaceCluster {
+  id: string;
+  student_id?: number | null;
+  student_name?: string | null;
+  student_class_name?: string | null;
+  name?: string | null;
+  face_count: number;
+  photo_count: number;
+  sample_face_crops: string[];
+  created_at: string;
+}
+
 interface StatusCounts {
   pending: number;
   processing: number;
@@ -59,7 +73,7 @@ interface StatusCounts {
 }
 
 export default function FaceProcessingAdminPage() {
-  const { user, token, logout, loading: authLoading } = useAuth();
+  const { user, token, logout } = useAuth();
 
   const [counts, setCounts] = useState<StatusCounts>({
     pending: 0,
@@ -70,6 +84,8 @@ export default function FaceProcessingAdminPage() {
   });
 
   const [photos, setPhotos] = useState<ProcessingPhoto[]>([]);
+  const [clusters, setClusters] = useState<FaceCluster[]>([]);
+  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>("ALL");
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -88,8 +104,20 @@ export default function FaceProcessingAdminPage() {
         setCounts(countsData);
       }
 
-      // 2. Carrega lista detalhada de fotos
-      const photosRes = await fetch(`${API_URL}/api/system/processing-photos?status_filter=${activeFilter}&limit=100`);
+      // 2. Carrega lista de clusters (Pessoas)
+      const clustersRes = await fetch(`${API_URL}/api/faces/clusters?status=all`);
+      if (clustersRes.ok) {
+        const clustersData = await clustersRes.json();
+        setClusters(clustersData);
+      }
+
+      // 3. Carrega lista detalhada de fotos (com filtro por status e/ou por cluster_id)
+      let url = `${API_URL}/api/system/processing-photos?status_filter=${activeFilter}&limit=100`;
+      if (selectedClusterId) {
+        url += `&cluster_id=${encodeURIComponent(selectedClusterId)}`;
+      }
+
+      const photosRes = await fetch(url);
       if (photosRes.ok) {
         const photosData = await photosRes.json();
         setPhotos(photosData);
@@ -99,9 +127,9 @@ export default function FaceProcessingAdminPage() {
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, [activeFilter]);
+  }, [activeFilter, selectedClusterId]);
 
-  // Carga inicial e quando o filtro muda
+  // Carga inicial e quando os filtros mudam
   useEffect(() => {
     void loadData(true);
   }, [loadData]);
@@ -186,39 +214,57 @@ export default function FaceProcessingAdminPage() {
     }
   }
 
+  // Ação: Reagrupar Todas as Faces via DBSCAN
+  async function handleReclusterAll() {
+    setActionLoading("recluster");
+    setActionMessage(null);
+    try {
+      const res = await fetch(`${API_URL}/api/system/recluster-all`, { method: "POST" });
+      const data = await res.json();
+      setActionMessage({ type: "success", text: data.message });
+      await loadData(false);
+    } catch (err) {
+      setActionMessage({ type: "error", text: "Erro ao reagrupar faces." });
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   function toggleErrorExpand(photoId: number) {
     setExpandedErrors(prev => ({ ...prev, [photoId]: !prev[photoId] }));
   }
 
+  const activeCluster = clusters.find(c => c.id === selectedClusterId);
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="min-h-screen bg-slate-50 text-slate-900">
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20">
+      <header className="border-b border-slate-200 bg-white/90 backdrop-blur sticky top-0 z-20">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3.5">
           <div className="flex items-center gap-4">
             <Link
               href="/"
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white transition"
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition"
             >
               <ArrowLeft className="h-4 w-4" />
               Voltar
             </Link>
             <div>
               <div className="flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-indigo-400" />
-                <h1 className="font-semibold text-white tracking-tight">Reconhecimento Facial & Fila de Processamento</h1>
+                <Sparkles className="h-5 w-5 text-blue-600" />
+                <h1 className="font-semibold text-slate-900 tracking-tight">Reconhecimento Facial & Fila de Processamento</h1>
               </div>
-              <p className="text-xs text-slate-400">Monitoramento e controle de inferência (InsightFace + DBSCAN)</p>
+              <p className="text-xs text-slate-500">Monitoramento e agrupamento inteligente de fotos escolares</p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
                 autoRefresh
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                  : "border-slate-700 bg-slate-800 text-slate-400 hover:text-slate-200"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-slate-200 bg-slate-100 text-slate-500 hover:text-slate-800"
               }`}
             >
               <RefreshCw className={`h-3.5 w-3.5 ${autoRefresh ? "animate-spin" : ""}`} />
@@ -226,11 +272,11 @@ export default function FaceProcessingAdminPage() {
             </button>
 
             {user && (
-              <div className="hidden sm:flex items-center gap-2 border-l border-slate-800 pl-3">
-                <span className="text-xs text-slate-400">{user.email}</span>
+              <div className="hidden sm:flex items-center gap-2 border-l border-slate-200 pl-3">
+                <span className="text-xs text-slate-500">{user.email}</span>
                 <button
                   onClick={logout}
-                  className="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
                   title="Sair"
                 >
                   <LogOut className="h-4 w-4" />
@@ -247,21 +293,21 @@ export default function FaceProcessingAdminPage() {
           <div
             className={`mb-6 flex items-center justify-between rounded-xl border p-4 text-sm ${
               actionMessage.type === "success"
-                ? "border-emerald-500/30 bg-emerald-950/40 text-emerald-200"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                 : actionMessage.type === "error"
-                ? "border-rose-500/30 bg-rose-950/40 text-rose-200"
-                : "border-blue-500/30 bg-blue-950/40 text-blue-200"
+                ? "border-rose-200 bg-rose-50 text-rose-800"
+                : "border-blue-200 bg-blue-50 text-blue-800"
             }`}
           >
             <div className="flex items-center gap-2.5">
-              {actionMessage.type === "success" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
-              {actionMessage.type === "error" && <AlertTriangle className="h-5 w-5 text-rose-400" />}
-              {actionMessage.type === "info" && <Sparkles className="h-5 w-5 text-blue-400" />}
+              {actionMessage.type === "success" && <CheckCircle2 className="h-5 w-5 text-emerald-600" />}
+              {actionMessage.type === "error" && <AlertTriangle className="h-5 w-5 text-rose-600" />}
+              {actionMessage.type === "info" && <Sparkles className="h-5 w-5 text-blue-600" />}
               <span>{actionMessage.text}</span>
             </div>
             <button
               onClick={() => setActionMessage(null)}
-              className="text-xs opacity-70 hover:opacity-100"
+              className="text-xs opacity-70 hover:opacity-100 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
@@ -270,52 +316,52 @@ export default function FaceProcessingAdminPage() {
 
         {/* Métricas da Fila */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 mb-6">
-          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-            <p className="text-xs font-medium text-slate-400">Total de Fotos</p>
-            <p className="mt-1.5 text-2xl font-bold text-white">{counts.total}</p>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-medium text-slate-500">Total de Fotos</p>
+            <p className="mt-1.5 text-2xl font-bold text-slate-900">{counts.total}</p>
           </div>
 
-          <div className="rounded-xl border border-blue-900/40 bg-blue-950/20 p-4">
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-blue-300">Pendentes</p>
-              <Clock className="h-4 w-4 text-blue-400" />
+              <p className="text-xs font-medium text-blue-700">Pendentes</p>
+              <Clock className="h-4 w-4 text-blue-600" />
             </div>
-            <p className="mt-1.5 text-2xl font-bold text-blue-200">{counts.pending}</p>
+            <p className="mt-1.5 text-2xl font-bold text-blue-800">{counts.pending}</p>
           </div>
 
-          <div className="rounded-xl border border-amber-900/40 bg-amber-950/20 p-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-amber-300">Em Processamento</p>
-              <Loader2 className="h-4 w-4 text-amber-400 animate-spin" />
+              <p className="text-xs font-medium text-amber-700">Em Processamento</p>
+              <Loader2 className="h-4 w-4 text-amber-600 animate-spin" />
             </div>
-            <p className="mt-1.5 text-2xl font-bold text-amber-200">{counts.processing}</p>
+            <p className="mt-1.5 text-2xl font-bold text-amber-800">{counts.processing}</p>
           </div>
 
-          <div className="rounded-xl border border-emerald-900/40 bg-emerald-950/20 p-4">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-emerald-300">Concluídas</p>
-              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              <p className="text-xs font-medium text-emerald-700">Concluídas</p>
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
             </div>
-            <p className="mt-1.5 text-2xl font-bold text-emerald-200">{counts.completed}</p>
+            <p className="mt-1.5 text-2xl font-bold text-emerald-800">{counts.completed}</p>
           </div>
 
-          <div className="rounded-xl border border-rose-900/40 bg-rose-950/20 p-4 col-span-2 sm:col-span-1">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 col-span-2 sm:col-span-1">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-rose-300">Falhas</p>
-              <ShieldAlert className="h-4 w-4 text-rose-400" />
+              <p className="text-xs font-medium text-rose-700">Falhas</p>
+              <ShieldAlert className="h-4 w-4 text-rose-600" />
             </div>
-            <p className="mt-1.5 text-2xl font-bold text-rose-200">{counts.failed}</p>
+            <p className="mt-1.5 text-2xl font-bold text-rose-800">{counts.failed}</p>
           </div>
         </div>
 
         {/* Barra de Ações Principais */}
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 mb-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/90 p-4 mb-6 shadow-sm">
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Botão de Disparo Manual de Processamento */}
             <button
               onClick={handleProcessNow}
               disabled={actionLoading !== null}
-              className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 active:scale-95 disabled:opacity-50 transition cursor-pointer"
+              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-slate-900 shadow-lg shadow-indigo-600/30 hover:bg-blue-700 active:scale-95 disabled:opacity-50 transition cursor-pointer"
             >
               {actionLoading === "process" ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -329,14 +375,14 @@ export default function FaceProcessingAdminPage() {
             <button
               onClick={handleIngestTestFolder}
               disabled={actionLoading !== null}
-              className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-700 active:scale-95 disabled:opacity-50 transition cursor-pointer"
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-200 active:scale-95 disabled:opacity-50 transition cursor-pointer"
             >
               {actionLoading === "ingest" ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <FolderInput className="h-4 w-4 text-indigo-400" />
+                <FolderInput className="h-4 w-4 text-blue-600" />
               )}
-              <span>Importar Pasta de Testes (test_images/)</span>
+              <span>Importar Pasta de Testes</span>
             </button>
           </div>
 
@@ -345,7 +391,7 @@ export default function FaceProcessingAdminPage() {
               <button
                 onClick={handleReprocessFailed}
                 disabled={actionLoading !== null}
-                className="flex items-center gap-1.5 rounded-xl border border-rose-800/60 bg-rose-950/30 px-3 py-2 text-xs font-medium text-rose-300 hover:bg-rose-900/40 transition cursor-pointer"
+                className="flex items-center gap-1.5 rounded-xl border border-rose-800/60 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-900/40 transition cursor-pointer"
               >
                 <RotateCcwIcon className="h-3.5 w-3.5" />
                 Reprocessar Falhas ({counts.failed})
@@ -353,9 +399,23 @@ export default function FaceProcessingAdminPage() {
             )}
 
             <button
+              onClick={handleReclusterAll}
+              disabled={actionLoading !== null}
+              className="flex items-center gap-1.5 rounded-xl border border-indigo-800/60 bg-indigo-950/40 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-indigo-900/50 transition cursor-pointer"
+              title="Executa DBSCAN novamente em todas as faces para reagrupar pessoas"
+            >
+              {actionLoading === "recluster" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Layers className="h-3.5 w-3.5 text-blue-600" />
+              )}
+              Reagrupar Rostos (DBSCAN)
+            </button>
+
+            <button
               onClick={handleReprocessAll}
               disabled={actionLoading !== null}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition cursor-pointer"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-100/60 px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer"
             >
               Reprocessar Todas
             </button>
@@ -363,7 +423,7 @@ export default function FaceProcessingAdminPage() {
             <button
               onClick={() => loadData(true)}
               disabled={loading}
-              className="rounded-xl border border-slate-700 bg-slate-800 p-2 text-slate-400 hover:text-white transition"
+              className="rounded-xl border border-slate-200 bg-slate-100 p-2 text-slate-500 hover:text-slate-900 transition cursor-pointer"
               title="Atualizar agora"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
@@ -371,8 +431,115 @@ export default function FaceProcessingAdminPage() {
           </div>
         </div>
 
-        {/* Abas de Filtros */}
-        <div className="flex border-b border-slate-800 mb-6 gap-1 overflow-x-auto pb-1">
+        {/* SEÇÃO: FILTRO POR PESSOA / CLUSTER (NOVO!) */}
+        {clusters.length > 0 && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 mb-6 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-blue-600" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                  Pessoas Agrupadas ({clusters.length})
+                </h3>
+                <span className="text-[11px] text-slate-500">
+                  — Clique em uma pessoa para ver todas as suas fotos
+                </span>
+              </div>
+
+              {selectedClusterId && (
+                <button
+                  onClick={() => setSelectedClusterId(null)}
+                  className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 transition cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Ver Todas as Fotos (Limpar Filtro)
+                </button>
+              )}
+            </div>
+
+            {/* Carrossel / Faixa de Pessoas */}
+            <div className="flex gap-2.5 overflow-x-auto pb-2 scrollbar-thin">
+              {/* Opção "Todos" */}
+              <button
+                onClick={() => setSelectedClusterId(null)}
+                className={`flex shrink-0 items-center gap-2.5 rounded-xl border p-2 text-left transition cursor-pointer ${
+                  selectedClusterId === null
+                    ? "border-indigo-500 bg-indigo-500/15 text-slate-900 ring-2 ring-indigo-500/30"
+                    : "border-slate-200 bg-slate-50/60 text-slate-500 hover:border-slate-200 hover:text-slate-800"
+                }`}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100">
+                  <Users className="h-5 w-5 text-blue-600" />
+                </div>
+                <div className="pr-2">
+                  <p className="text-xs font-semibold text-slate-900">Todas as Fotos</p>
+                  <p className="text-[10px] text-slate-500">{counts.total} foto(s)</p>
+                </div>
+              </button>
+
+              {/* Lista de Clusters de Pessoas */}
+              {clusters.map((c, index) => {
+                const isSelected = selectedClusterId === c.id;
+                const sampleCrop = c.sample_face_crops?.[0];
+
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedClusterId(isSelected ? null : c.id)}
+                    className={`flex shrink-0 items-center gap-2.5 rounded-xl border p-2 text-left transition cursor-pointer ${
+                      isSelected
+                        ? "border-indigo-500 bg-indigo-500/20 text-slate-900 ring-2 ring-indigo-500/40 shadow-lg shadow-indigo-500/10"
+                        : "border-slate-200 bg-slate-50/80 text-slate-500 hover:border-slate-200 hover:text-slate-800"
+                    }`}
+                  >
+                    {sampleCrop ? (
+                      <img
+                        src={`${API_URL}${sampleCrop}`}
+                        alt={c.name || "Face"}
+                        className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-200"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100">
+                        <User className="h-5 w-5 text-slate-500" />
+                      </div>
+                    )}
+                    <div className="min-w-0 pr-2">
+                      <p className="truncate text-xs font-bold text-slate-900 max-w-[120px]">
+                        {c.student_name || c.name || `Pessoa #${index + 1}`}
+                      </p>
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                        <span className="font-semibold text-blue-700">{c.photo_count} foto{c.photo_count !== 1 ? "s" : ""}</span>
+                        <span>•</span>
+                        <span>{c.face_count} face{c.face_count !== 1 ? "s" : ""}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Indicador de Filtro de Pessoa Ativo */}
+        {activeCluster && (
+          <div className="mb-4 flex items-center justify-between rounded-xl border border-indigo-500/30 bg-indigo-950/40 px-4 py-2.5 text-xs text-indigo-200">
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-blue-600" />
+              <span>
+                Exibindo apenas fotos com <strong>{activeCluster.student_name || activeCluster.name || "esta Pessoa"}</strong> ({photos.length} fotos encontradas)
+              </span>
+            </div>
+            <button
+              onClick={() => setSelectedClusterId(null)}
+              className="flex items-center gap-1 rounded-lg bg-indigo-900/60 px-2.5 py-1 text-[11px] font-semibold text-indigo-200 hover:bg-indigo-800 transition cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+              Remover Filtro
+            </button>
+          </div>
+        )}
+
+        {/* Abas de Filtros por Status */}
+        <div className="flex border-b border-slate-200 mb-6 gap-1 overflow-x-auto pb-1">
           {[
             { id: "ALL", label: "Todas as Fotos", count: counts.total },
             { id: "PENDING", label: "Pendentes", count: counts.pending },
@@ -385,15 +552,15 @@ export default function FaceProcessingAdminPage() {
               onClick={() => setActiveFilter(tab.id)}
               className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-medium whitespace-nowrap transition cursor-pointer ${
                 activeFilter === tab.id
-                  ? "border-indigo-500 text-indigo-400 bg-indigo-500/5 rounded-t-lg"
-                  : "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700"
+                  ? "border-indigo-500 text-blue-600 bg-indigo-500/5 rounded-t-lg"
+                  : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-200"
               }`}
             >
               <span>{tab.label}</span>
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                 activeFilter === tab.id
-                  ? "bg-indigo-500/20 text-indigo-300"
-                  : "bg-slate-800 text-slate-400"
+                  ? "bg-indigo-500/20 text-blue-700"
+                  : "bg-slate-100 text-slate-500"
               }`}>
                 {tab.count}
               </span>
@@ -405,15 +572,26 @@ export default function FaceProcessingAdminPage() {
         {loading && photos.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-slate-500">
             <Loader2 className="h-8 w-8 animate-spin text-indigo-500 mb-3" />
-            <p className="text-sm">Carregando status das imagens...</p>
+            <p className="text-sm">Carregando fotos...</p>
           </div>
         ) : photos.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-800 p-12 text-center">
+          <div className="rounded-2xl border border-dashed border-slate-200 p-12 text-center">
             <FolderInput className="mx-auto h-12 w-12 text-slate-600 mb-3" />
-            <h3 className="text-base font-medium text-slate-300">Nenhuma foto encontrada neste filtro</h3>
-            <p className="mt-1 text-xs text-slate-500 max-w-md mx-auto">
-              Coloque arquivos de imagem na pasta <code className="text-indigo-400 bg-indigo-950/50 px-1.5 py-0.5 rounded">backend/test_images/</code> e clique em &quot;Importar Pasta de Testes&quot; acima para iniciar!
-            </p>
+            <h3 className="text-base font-medium text-slate-600">
+              {selectedClusterId ? "Nenhuma foto encontrada para esta pessoa neste filtro de status" : "Nenhuma foto encontrada neste filtro"}
+            </h3>
+            {selectedClusterId ? (
+              <button
+                onClick={() => setSelectedClusterId(null)}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-slate-900 hover:bg-blue-700 transition cursor-pointer"
+              >
+                Ver Todas as Fotos
+              </button>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500 max-w-md mx-auto">
+                Coloque arquivos de imagem na pasta <code className="text-blue-600 bg-indigo-950/50 px-1.5 py-0.5 rounded">backend/test_images/</code> e clique em &quot;Importar Pasta de Testes&quot; acima para iniciar!
+              </p>
+            )}
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -426,20 +604,20 @@ export default function FaceProcessingAdminPage() {
               return (
                 <div
                   key={photo.id}
-                  className={`flex flex-col rounded-2xl border bg-slate-900/60 p-4 transition shadow-sm hover:border-slate-700 ${
+                  className={`flex flex-col rounded-2xl border bg-white p-4 transition shadow-sm hover:border-slate-200 ${
                     isFailed
                       ? "border-rose-900/50"
                       : isProcessing
                       ? "border-amber-800/50"
                       : isPending
                       ? "border-blue-900/50"
-                      : "border-slate-800"
+                      : "border-slate-200"
                   }`}
                 >
                   {/* Cabeçalho do Card */}
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <div className="min-w-0">
-                      <p className="truncate text-xs font-semibold text-slate-200" title={photo.file_path}>
+                      <p className="truncate text-xs font-semibold text-slate-800" title={photo.file_path}>
                         {photo.file_path}
                       </p>
                       <p className="text-[11px] text-slate-500">
@@ -451,12 +629,12 @@ export default function FaceProcessingAdminPage() {
                     <span
                       className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
                         isCompleted
-                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                          ? "bg-emerald-50 text-emerald-600 border border-emerald-500/20"
                           : isProcessing
-                          ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse"
+                          ? "bg-amber-500/10 text-amber-600 border border-amber-500/20 animate-pulse"
                           : isPending
-                          ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                          : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                          ? "bg-blue-500/10 text-blue-600 border border-blue-500/20"
+                          : "bg-rose-500/10 text-rose-600 border border-rose-500/20"
                       }`}
                     >
                       {isCompleted && <CheckCircle2 className="h-3 w-3" />}
@@ -470,7 +648,7 @@ export default function FaceProcessingAdminPage() {
                   {/* Thumbnail da Foto Principal */}
                   <div
                     onClick={() => setSelectedPhoto(photo)}
-                    className="relative aspect-video w-full rounded-xl bg-slate-950 overflow-hidden cursor-pointer group border border-slate-800/80 mb-3"
+                    className="relative aspect-video w-full rounded-xl bg-slate-50 overflow-hidden cursor-pointer group border border-slate-200/80 mb-3"
                   >
                     <img
                       src={`${API_URL}${photo.image_url}`}
@@ -478,7 +656,7 @@ export default function FaceProcessingAdminPage() {
                       className="h-full w-full object-cover group-hover:scale-105 transition duration-300"
                       loading="lazy"
                     />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1.5 text-xs text-white font-medium">
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1.5 text-xs text-slate-900 font-medium">
                       <Eye className="h-4 w-4" />
                       Inspecionar
                     </div>
@@ -486,53 +664,63 @@ export default function FaceProcessingAdminPage() {
 
                   {/* Rostos Detectados */}
                   <div className="flex-1">
-                    <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                    <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
                       <span className="font-medium flex items-center gap-1">
-                        <Layers className="h-3.5 w-3.5 text-indigo-400" />
+                        <Layers className="h-3.5 w-3.5 text-blue-600" />
                         Rostos Detectados:
                       </span>
-                      <span className="font-semibold text-slate-200">
+                      <span className="font-semibold text-slate-800">
                         {photo.detected_faces.length}
                       </span>
                     </div>
 
                     {isCompleted && photo.detected_faces.length > 0 ? (
                       <div className="flex flex-wrap gap-2">
-                        {photo.detected_faces.map((face) => (
-                          <div
-                            key={face.id}
-                            className="group relative flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/80 p-1.5 pr-2.5 text-[11px]"
-                          >
-                            {face.face_crop_url ? (
-                              <img
-                                src={`${API_URL}${face.face_crop_url}`}
-                                alt="Face crop"
-                                className="h-8 w-8 rounded-md object-cover border border-slate-700"
-                              />
-                            ) : (
-                              <div className="h-8 w-8 rounded-md bg-slate-800 flex items-center justify-center">
-                                <User className="h-4 w-4 text-slate-500" />
+                        {photo.detected_faces.map((face) => {
+                          const isThisClusterActive = selectedClusterId && face.cluster_id === selectedClusterId;
+
+                          return (
+                            <button
+                              key={face.id}
+                              onClick={() => face.cluster_id && setSelectedClusterId(face.cluster_id)}
+                              className={`group relative flex items-center gap-1.5 rounded-lg border p-1.5 pr-2.5 text-[11px] text-left transition cursor-pointer ${
+                                isThisClusterActive
+                                  ? "border-indigo-500 bg-indigo-500/20 ring-1 ring-indigo-500"
+                                  : "border-slate-200 bg-slate-50/80 hover:border-slate-200 hover:bg-white"
+                              }`}
+                              title={face.cluster_id ? "Clique para filtrar todas as fotos desta pessoa" : undefined}
+                            >
+                              {face.face_crop_url ? (
+                                <img
+                                  src={`${API_URL}${face.face_crop_url}`}
+                                  alt="Face crop"
+                                  className="h-8 w-8 rounded-md object-cover border border-slate-200"
+                                />
+                              ) : (
+                                <div className="h-8 w-8 rounded-md bg-slate-100 flex items-center justify-center">
+                                  <User className="h-4 w-4 text-slate-500" />
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="truncate font-semibold text-slate-800 max-w-[100px]">
+                                  {face.student_name ? face.student_name : face.cluster_name || "Pessoa"}
+                                </p>
+                                <p className="text-[9px] text-blue-600 group-hover:underline">
+                                  {face.cluster_id ? "Ver fotos →" : "Sem grupo"}
+                                </p>
                               </div>
-                            )}
-                            <div className="min-w-0">
-                              <p className="truncate font-medium text-slate-300 max-w-[100px]">
-                                {face.student_name ? face.student_name : face.cluster_name || "Pessoa"}
-                              </p>
-                              <p className="text-[9px] text-slate-500">
-                                {face.student_name ? "Identificado" : "Não atribuído"}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
+                            </button>
+                          );
+                        })}
                       </div>
                     ) : isCompleted && photo.detected_faces.length === 0 ? (
                       <p className="text-xs text-slate-500 italic">Nenhum rosto identificado nesta imagem.</p>
                     ) : isPending ? (
-                      <p className="text-xs text-blue-400/80 bg-blue-950/30 rounded-lg p-2 border border-blue-900/30">
+                      <p className="text-xs text-blue-600/80 bg-blue-50 rounded-lg p-2 border border-blue-200">
                         Aguardando processamento na fila...
                       </p>
                     ) : isProcessing ? (
-                      <p className="text-xs text-amber-400/80 bg-amber-950/30 rounded-lg p-2 border border-amber-900/30 flex items-center gap-1.5">
+                      <p className="text-xs text-amber-600/80 bg-amber-50 rounded-lg p-2 border border-amber-200 flex items-center gap-1.5">
                         <Loader2 className="h-3 w-3 animate-spin" />
                         Executando InsightFace e gerando embeddings...
                       </p>
@@ -541,19 +729,19 @@ export default function FaceProcessingAdminPage() {
 
                   {/* Log de Erro se Falhou */}
                   {isFailed && photo.process_error && (
-                    <div className="mt-3 rounded-xl border border-rose-900/60 bg-rose-950/30 p-2.5 text-xs text-rose-300">
+                    <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">
                       <button
                         onClick={() => toggleErrorExpand(photo.id)}
-                        className="flex w-full items-center justify-between font-medium text-rose-300"
+                        className="flex w-full items-center justify-between font-medium text-rose-700 cursor-pointer"
                       >
                         <span className="flex items-center gap-1.5">
-                          <AlertTriangle className="h-3.5 w-3.5 text-rose-400" />
+                          <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
                           Ver erro do processamento (Tentativa #{photo.process_attempts})
                         </span>
                         {expandedErrors[photo.id] ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                       </button>
                       {expandedErrors[photo.id] && (
-                        <pre className="mt-2 max-h-40 overflow-y-auto rounded bg-black/50 p-2 font-mono text-[10px] text-rose-200 whitespace-pre-wrap">
+                        <pre className="mt-2 max-h-40 overflow-y-auto rounded bg-slate-100 p-2 font-mono text-[10px] text-rose-800 whitespace-pre-wrap">
                           {photo.process_error}
                         </pre>
                       )}
@@ -567,20 +755,20 @@ export default function FaceProcessingAdminPage() {
 
         {/* Modal de Inspeção Detalhada */}
         {selectedPhoto && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-            <div className="relative max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+            <div className="relative max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
               <button
                 onClick={() => setSelectedPhoto(null)}
-                className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
 
-              <h2 className="text-lg font-bold text-white mb-1">Inspeção da Foto #{selectedPhoto.id}</h2>
-              <p className="text-xs text-slate-400 mb-4">{selectedPhoto.file_path}</p>
+              <h2 className="text-lg font-bold text-slate-900 mb-1">Inspeção da Foto #{selectedPhoto.id}</h2>
+              <p className="text-xs text-slate-500 mb-4">{selectedPhoto.file_path}</p>
 
               <div className="grid gap-6 md:grid-cols-2">
-                <div className="rounded-xl overflow-hidden bg-slate-950 border border-slate-800">
+                <div className="rounded-xl overflow-hidden bg-slate-50 border border-slate-200">
                   <img
                     src={`${API_URL}${selectedPhoto.image_url}`}
                     alt="Full Preview"
@@ -589,50 +777,54 @@ export default function FaceProcessingAdminPage() {
                 </div>
 
                 <div className="flex flex-col gap-4">
-                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs">
-                    <p className="font-semibold text-slate-300 mb-2">Detalhes de Processamento</p>
-                    <div className="space-y-1.5 text-slate-400">
-                      <p><strong className="text-slate-300">Status:</strong> {selectedPhoto.process_status}</p>
-                      <p><strong className="text-slate-300">Tentativas:</strong> {selectedPhoto.process_attempts}</p>
-                      <p><strong className="text-slate-300">Data de Registro:</strong> {new Date(selectedPhoto.created_at).toLocaleString()}</p>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-xs">
+                    <p className="font-semibold text-slate-600 mb-2">Detalhes de Processamento</p>
+                    <div className="space-y-1.5 text-slate-500">
+                      <p><strong className="text-slate-600">Status:</strong> {selectedPhoto.process_status}</p>
+                      <p><strong className="text-slate-600">Tentativas:</strong> {selectedPhoto.process_attempts}</p>
+                      <p><strong className="text-slate-600">Data de Registro:</strong> {new Date(selectedPhoto.created_at).toLocaleString()}</p>
                     </div>
                   </div>
 
                   <div>
-                    <h4 className="text-xs font-semibold text-slate-300 mb-2">Faces Detectadas ({selectedPhoto.detected_faces.length})</h4>
+                    <h4 className="text-xs font-semibold text-slate-600 mb-2">Faces Detectadas ({selectedPhoto.detected_faces.length})</h4>
                     <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                       {selectedPhoto.detected_faces.map((face, index) => (
                         <div
                           key={face.id}
-                          className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/80 p-2.5 text-xs"
+                          className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-2.5 text-xs"
                         >
                           <div className="flex items-center gap-3">
                             {face.face_crop_url && (
                               <img
                                 src={`${API_URL}${face.face_crop_url}`}
                                 alt="Crop"
-                                className="h-10 w-10 rounded-lg object-cover border border-slate-700"
+                                className="h-10 w-10 rounded-lg object-cover border border-slate-200"
                               />
                             )}
                             <div>
-                              <p className="font-semibold text-slate-200">Face #{index + 1}</p>
-                              <p className="text-[11px] text-slate-400">
-                                Cluster: <span className="text-indigo-400">{face.cluster_name || face.cluster_id?.slice(0, 8) || "N/A"}</span>
+                              <p className="font-semibold text-slate-800">Face #{index + 1}</p>
+                              <p className="text-[11px] text-slate-500">
+                                Cluster: <span className="text-blue-600">{face.cluster_name || face.cluster_id?.slice(0, 8) || "N/A"}</span>
                               </p>
                             </div>
                           </div>
 
-                          <div className="text-right">
-                            <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold ${
-                              face.student_name
-                                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                                : "bg-slate-800 text-slate-400"
-                            }`}>
-                              {face.student_name ? `Aluno: ${face.student_name}` : "Não atribuído"}
-                            </span>
+                          <div className="flex items-center gap-2">
+                            {face.cluster_id && (
+                              <button
+                                onClick={() => {
+                                  setSelectedClusterId(face.cluster_id!);
+                                  setSelectedPhoto(null);
+                                }}
+                                className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-700/20 transition cursor-pointer"
+                              >
+                                Ver todas as fotos
+                              </button>
+                            )}
                             {face.detection_score && (
-                              <p className="text-[10px] text-slate-500 mt-0.5">
-                                Confiança: {(face.detection_score * 100).toFixed(1)}%
+                              <p className="text-[10px] text-slate-500">
+                                {(face.detection_score * 100).toFixed(0)}%
                               </p>
                             )}
                           </div>

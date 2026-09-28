@@ -14,18 +14,6 @@ VALID_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".avif", ".
 
 def ingest():
     print(f"Varrendo pasta de testes: {TEST_IMAGES_DIR}")
-    import zipfile
-
-    for item in os.listdir(TEST_IMAGES_DIR):
-        if item.lower().endswith(".zip"):
-            zip_path = os.path.join(TEST_IMAGES_DIR, item)
-            try:
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(TEST_IMAGES_DIR)
-                print(f"Arquivo {item} descompactado com sucesso.")
-            except Exception as e:
-                print(f"Aviso ao extrair {item}: {e}")
-
     image_paths = []
     for root, dirs, files in os.walk(TEST_IMAGES_DIR):
         if "__MACOSX" in root:
@@ -36,7 +24,7 @@ def ingest():
 
     if not image_paths:
         print("Nenhuma imagem encontrada em test_images/.")
-        print("Coloque arquivos .jpg, .png, .zip, etc. na pasta test_images/ e execute novamente.")
+        print("Coloque arquivos .jpg, .png, etc. na pasta test_images/ e execute novamente.")
         return
 
     session = db.SessionLocal()

@@ -41,16 +41,23 @@ def get_processing_status(session: Session = Depends(db.get_db)):
 @router.get("/processing-photos", response_model=List[schemas.ProcessingPhotoDetail])
 def get_processing_photos(
     status_filter: Optional[str] = Query("ALL", regex="^(ALL|PENDING|PROCESSING|COMPLETED|FAILED)$"),
+    cluster_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     session: Session = Depends(db.get_db),
 ):
     """
     Retorna lista detalhada de fotos e o status individual de cada uma (incluindo faces recortadas e erros).
+    Suporta filtros por status e por cluster_id (Pessoa).
     """
     query = session.query(models.Photo)
     if status_filter != "ALL":
         query = query.filter(models.Photo.process_status == models.ProcessStatusEnum(status_filter))
+
+    if cluster_id:
+        query = query.join(models.DetectedFace, models.Photo.id == models.DetectedFace.photo_id)\
+                     .filter(models.DetectedFace.cluster_id == cluster_id)\
+                     .distinct()
 
     photos = query.order_by(models.Photo.created_at.desc()).offset(offset).limit(limit).all()
 
@@ -132,22 +139,9 @@ def ingest_test_folder(
     first_user = session.query(models.User).first()
     uploader_id = first_user.id if first_user else 1
 
-    import zipfile
-
-    # Descompacta arquivos .zip encontrados na pasta de testes
-    for item in os.listdir(TEST_IMAGES_DIR):
-        if item.lower().endswith(".zip"):
-            zip_path = os.path.join(TEST_IMAGES_DIR, item)
-            try:
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(TEST_IMAGES_DIR)
-            except Exception as e:
-                print(f"Aviso ao extrair {item}: {e}")
-
-    # Varre recursivamente arquivos de imagem na pasta de testes
+    # Varre arquivos de imagem na pasta de testes
     image_paths = []
     for root, dirs, files in os.walk(TEST_IMAGES_DIR):
-        # Ignora arquivos de sistema como __MACOSX ou .DS_Store
         if "__MACOSX" in root:
             continue
         for f in files:
@@ -159,7 +153,7 @@ def ingest_test_folder(
             imported_count=0,
             skipped_count=0,
             total_found=0,
-            message="Nenhuma imagem encontrada em test_images/ (formatos aceitos: jpg, png, webp, heic, avif, zip)."
+            message="Nenhuma imagem encontrada em test_images/ (formatos aceitos: jpg, png, webp, heic, avif, bmp)."
         )
 
     imported = 0
@@ -196,7 +190,7 @@ def ingest_test_folder(
     return schemas.IngestTestFolderResponse(
         imported_count=imported,
         skipped_count=skipped,
-        total_found=len(image_files),
+        total_found=len(image_paths),
         message=f"{imported} foto(s) importada(s) da pasta test_images com sucesso para a fila (status PENDING)."
     )
 
@@ -228,3 +222,20 @@ def reprocess_all_photos(session: Session = Depends(db.get_db)):
         photo.process_error = None
     session.commit()
     return {"message": f"{count} fotos re-enfileiradas para processamento completo."}
+
+
+@router.post("/recluster-all")
+def recluster_faces(
+    threshold: float = Query(0.48, ge=0.2, le=0.8),
+    session: Session = Depends(db.get_db),
+):
+    """
+    Reagrupa todas as faces do banco de dados com DBSCAN utilizando a distância de cosseno calibrada.
+    """
+    from ..face_service import recluster_all_faces
+    result = recluster_all_faces(session, distance_threshold=threshold)
+    return {
+        "message": f"{result['total_faces']} faces reagrupadas em {result['clusters_created']} pessoa(s)/cluster(s) com sucesso!",
+        "result": result,
+    }
+

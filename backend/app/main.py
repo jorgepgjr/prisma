@@ -19,8 +19,7 @@ from .routers.faces import router as faces_router
 from .routers.system import router as system_router
 from .admin import setup_admin
 
-# Cria as tabelas do banco de dados (útil para desenvolvimento, 
-# em produção recomenda-se usar Alembic)
+# Cria as tabelas do banco de dados (útil para desenvolvimento, em produção recomenda-se usar migrações)
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
