@@ -15,7 +15,7 @@ from .routers.media import router as media_router
 from .publishing import router as publishing_router
 from .families import router as families_router
 from .school_portfolio import router as school_portfolio_router
-from .admin import setup_admin
+from .admin_api import router as admin_router
 
 # Cria as tabelas do banco de dados (útil para desenvolvimento, 
 # em produção recomenda-se usar Alembic)
@@ -44,9 +44,6 @@ def startup_event():
         db.close()
 
 
-# Inicializa o SQLAdmin
-setup_admin(app)
-
 # Configuração de CORS para permitir que o frontend (Next.js) acesse a API
 origins = [
     "http://localhost:3000",
@@ -71,6 +68,7 @@ app.include_router(tags_router, prefix="/api/tags", tags=["Tags"])
 app.include_router(publishing_router, prefix="/api/posts", tags=["Publicações"])
 app.include_router(families_router, prefix="/api/families", tags=["Famílias"])
 app.include_router(school_portfolio_router, prefix="/api/portfolio", tags=["Portfólios"])
+app.include_router(admin_router, prefix="/api/admin", tags=["Administração"])
 
 # TinhaKids API v1 (Visão dos Pais)
 app.include_router(auth_parents_router, prefix="/api/v1/auth", tags=["TinhaKids - Auth"])

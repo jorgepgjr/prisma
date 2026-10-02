@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$projectRoot = Join-Path $PSScriptRoot 'prisma'
+$projectRoot = $PSScriptRoot
 $backendRoot = Join-Path $projectRoot 'backend'
 $frontendRoot = Join-Path $projectRoot 'frontend'
 $composeFile = Join-Path $projectRoot 'docker-compose.yml'

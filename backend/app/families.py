@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from . import db, models, schemas, security
-from .dependencies import get_current_user
+from .dependencies import require_roles
 from .photos import can_access_class
 
 router = APIRouter()
@@ -25,10 +25,12 @@ def family_response(child: models.Child) -> schemas.FamilyChildResponse:
 
 @router.get("/children", response_model=List[schemas.FamilyChildResponse])
 def list_family_children(
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles([models.RoleEnum.COORDENADOR])),
     session: Session = Depends(db.get_db),
 ):
-    children = session.query(models.Child).order_by(models.Child.name).all()
+    children = session.query(models.Child).filter(
+        models.Child.school_id == current_user.school_id
+    ).order_by(models.Child.name).all()
     return [family_response(child) for child in children]
 
 
@@ -36,10 +38,12 @@ def list_family_children(
 def create_family_profile(
     student_id: int,
     payload: schemas.FamilyAccountCreate,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles([models.RoleEnum.COORDENADOR])),
     session: Session = Depends(db.get_db),
 ):
-    student = session.query(models.Student).filter(models.Student.id == student_id).first()
+    student = session.query(models.Student).filter(
+        models.Student.id == student_id, models.Student.school_id == current_user.school_id
+    ).first()
     if not student:
         raise HTTPException(status_code=404, detail="Aluno não encontrado.")
     if not can_access_class(current_user, student.class_id):
@@ -68,6 +72,7 @@ def create_family_profile(
 
     child = models.Child(
         id=str(uuid.uuid4()),
+        school_id=current_user.school_id,
         name=student.name,
         avatar_path="",
         classroom=student.school_class.name,
@@ -84,10 +89,12 @@ def create_family_profile(
 def link_student_to_family_profile(
     student_id: int,
     payload: schemas.StudentFamilyLink,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles([models.RoleEnum.COORDENADOR])),
     session: Session = Depends(db.get_db),
 ):
-    student = session.query(models.Student).filter(models.Student.id == student_id).first()
+    student = session.query(models.Student).filter(
+        models.Student.id == student_id, models.Student.school_id == current_user.school_id
+    ).first()
     if not student:
         raise HTTPException(status_code=404, detail="Aluno não encontrado.")
     if not can_access_class(current_user, student.class_id):
@@ -96,7 +103,9 @@ def link_student_to_family_profile(
     if payload.child_id is None:
         student.child_profile = None
     else:
-        child = session.query(models.Child).filter(models.Child.id == payload.child_id).first()
+        child = session.query(models.Child).filter(
+            models.Child.id == payload.child_id, models.Child.school_id == current_user.school_id
+        ).first()
         if not child:
             raise HTTPException(status_code=404, detail="Perfil familiar não encontrado.")
         if child.student_profile and child.student_profile.id != student.id:
@@ -110,6 +119,7 @@ def link_student_to_family_profile(
     session.refresh(student)
     return schemas.StudentResponse(
         id=student.id,
+        school_id=student.school_id,
         name=student.name,
         class_id=student.class_id,
         marketing_allowed=student.marketing_allowed,

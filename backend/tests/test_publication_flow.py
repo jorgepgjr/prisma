@@ -23,23 +23,29 @@ class PublicationFlowTest(unittest.TestCase):
 
     def setUp(self):
         self.session = SessionLocal()
-        school_class = models.Class(name="Grupo 2", year=2026)
-        teacher = models.User(name="Marília", email="marilia@school.com", hashed_password="mypassword", role=models.RoleEnum.PROFESSOR)
+        school = models.School(name="Escola Teste")
+        self.session.add(school)
+        self.session.flush()
+        school_class = models.Class(school_id=school.id, name="Grupo 2", year=2026)
+        teacher = models.User(school_id=school.id, name="Marília", email="marilia@school.com", hashed_password="mypassword", role=models.RoleEnum.PROFESSOR)
+        coordinator = models.User(school_id=school.id, name="Coordenação", email="coord@school.com", hashed_password="mypassword", role=models.RoleEnum.COORDENADOR)
         teacher.classes.append(school_class)
-        student = models.Student(name="Pedro", school_class=school_class)
-        child = models.Child(id="pedro", name="Pedro", avatar_path="avatar.png", classroom="Grupo 2")
+        student = models.Student(school_id=school.id, name="Pedro", school_class=school_class)
+        child = models.Child(id="pedro", school_id=school.id, name="Pedro", avatar_path="avatar.png", classroom="Grupo 2")
         student.child_profile = child
         parent = models.Parent(id="responsavel", name="Responsável", email="familia@example.com", hashed_password="123456", is_active=True)
         parent.children.append(child)
-        photo = models.Photo(file_path="foto.jpg", title="Atividade", uploader=teacher, school_class=school_class)
-        photo_two = models.Photo(file_path="foto-2.jpg", title="Atividade 2", uploader=teacher, school_class=school_class)
-        self.session.add_all([school_class, teacher, student, child, parent, photo, photo_two])
+        photo = models.Photo(school_id=school.id, file_path="foto.jpg", title="Atividade", uploader=teacher, school_class=school_class)
+        photo_two = models.Photo(school_id=school.id, file_path="foto-2.jpg", title="Atividade 2", uploader=teacher, school_class=school_class)
+        self.session.add_all([school_class, teacher, coordinator, student, child, parent, photo, photo_two])
         self.session.commit()
         self.teacher_id = teacher.id
+        self.coordinator_id = coordinator.id
         self.student_id = student.id
         self.photo_id = photo.id
         self.photo_two_id = photo_two.id
         self.parent_id = parent.id
+        self.school_id = school.id
 
     def tearDown(self):
         self.session.close()
@@ -86,7 +92,8 @@ class PublicationFlowTest(unittest.TestCase):
 
     def test_school_can_create_and_link_a_family(self):
         teacher = self.session.get(models.User, self.teacher_id)
-        student = models.Student(name="Helena", class_id=teacher.classes[0].id)
+        coordinator = self.session.get(models.User, self.coordinator_id)
+        student = models.Student(school_id=self.school_id, name="Helena", class_id=teacher.classes[0].id)
         self.session.add(student)
         self.session.commit()
         result = create_family_profile(
@@ -96,7 +103,7 @@ class PublicationFlowTest(unittest.TestCase):
                 parent_email="maria@example.com",
                 initial_password="123456",
             ),
-            teacher,
+            coordinator,
             self.session,
         )
         self.assertEqual(result.name, "Helena")

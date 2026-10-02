@@ -14,8 +14,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type Tag = { id: number; name: string };
 type Photo = {
-  id: number; file_path: string; title?: string; description?: string;
-  uploader_name?: string; created_at: string; student_ids: number[]; tags: Tag[];
+  id: number; file_path: string; media_url: string; title?: string; description?: string;
+  uploader_name?: string; created_at: string; status: string; student_ids: number[]; tags: Tag[];
 };
 type Student = { id: number; name: string; child_id?: string | null };
 type FamilyChild = {
@@ -34,7 +34,7 @@ function detailFrom(data: unknown, fallback: string) {
 }
 
 function photoUrl(photo: Photo) {
-  return `${API_URL}/api/photos/file/${encodeURIComponent(photo.file_path)}`;
+  return photo.media_url.startsWith("http") ? photo.media_url : `${API_URL}${photo.media_url}`;
 }
 
 function signedUrl(value: string) {
@@ -54,7 +54,8 @@ function monthLabel(date: string) {
 export default function ClassPage() {
   const params = useParams<{ id: string }>();
   const classId = Number(params.id);
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isCoordinator = user?.role === "COORDENADOR";
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -88,15 +89,16 @@ export default function ClassPage() {
     setLoading(true);
     setError("");
     try {
-      const responses = await Promise.all([
+      const requests = [
         fetch(`${API_URL}/api/photos/class/${classId}`, { headers }),
         fetch(`${API_URL}/api/students/class/${classId}`, { headers }),
         fetch(`${API_URL}/api/posts/?class_id=${classId}`, { headers }),
         fetch(`${API_URL}/api/tags/`, { headers }),
-        fetch(`${API_URL}/api/families/children`, { headers }),
-      ]);
+      ];
+      if (isCoordinator) requests.push(fetch(`${API_URL}/api/families/children`, { headers }));
+      const responses = await Promise.all(requests);
       if (responses.some((response) => !response.ok)) throw new Error("Não foi possível carregar os dados da turma.");
-      const [photoData, studentData, postData, tagData, familyData] = await Promise.all(responses.map((response) => response.json()));
+      const [photoData, studentData, postData, tagData, familyData = []] = await Promise.all(responses.map((response) => response.json()));
       setPhotos(photoData);
       setStudents(studentData);
       setPosts(postData);
@@ -108,7 +110,7 @@ export default function ClassPage() {
     } finally {
       setLoading(false);
     }
-  }, [classId, headers, token]);
+  }, [classId, headers, isCoordinator, token]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -200,6 +202,13 @@ export default function ClassPage() {
       return;
     }
     await loadData();
+  }
+
+  async function updateStatus(status: string) {
+    if (!activePhoto) return;
+    const response = await fetch(`${API_URL}/api/photos/${activePhoto.id}/status`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    if (!response.ok) { const data = await response.json(); setError(detailFrom(data, "Não foi possível atualizar a liberação.")); return; }
+    setMessage("Situação da foto atualizada."); await loadData();
   }
 
   function openFamily(student: Student) {
@@ -300,11 +309,11 @@ export default function ClassPage() {
                 ))}
               </div>
 
-              <div className="grid gap-5 lg:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className={`grid gap-5 ${isCoordinator ? "lg:grid-cols-2" : ""}`}>
+                {isCoordinator && <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <h2 className="mb-3 font-semibold">Vínculos familiares</h2>
                   <div className="space-y-2">{students.map((student) => <div key={student.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3"><div className={`grid h-9 w-9 place-items-center rounded-full ${student.child_id ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}><UserRoundCheck className="h-4 w-4" /></div><div className="min-w-0 flex-1"><p className="text-sm font-medium">{student.name}</p><p className="truncate text-xs text-slate-500">{student.child_id ? `Perfil: ${student.child_id}` : "Sem responsável vinculado"}</p></div><button onClick={() => openFamily(student)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50">{student.child_id ? "Alterar" : "Vincular"}</button></div>)}</div>
-                </div>
+                </div>}
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <h2 className="mb-3 font-semibold">Publicações recentes</h2>
                   {posts.length === 0 ? <p className="text-sm text-slate-500">Nenhuma publicação criada.</p> : <div className="space-y-2">{posts.slice(0, 6).map((post) => <div key={post.id} className="flex gap-3 rounded-xl border border-slate-200 p-2.5"><div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg"><Image src={signedUrl(post.image_url)} alt="Publicação" fill unoptimized className="object-cover" />{post.image_urls?.length > 1 && <span className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white"><Layers3 className="mr-0.5 inline h-3 w-3" />{post.image_urls.length}</span>}</div><div className="min-w-0"><p className="line-clamp-2 text-sm">{post.caption}</p><p className="mt-1 truncate text-xs text-slate-500">{post.child_names.join(", ")}</p></div></div>)}</div>}
@@ -312,7 +321,7 @@ export default function ClassPage() {
               </div>
             </section>
 
-            <PhotoDetails photo={activePhoto} students={students} tags={tags} onTag={updateTag} />
+            <PhotoDetails photo={activePhoto} students={students} tags={tags} canApprove={user?.role === "COORDENADOR"} onTag={updateTag} onStatus={updateStatus} />
           </div>
         )}
       </main>
@@ -323,7 +332,7 @@ export default function ClassPage() {
   );
 }
 
-function PhotoDetails({ photo, students, tags, onTag }: { photo: Photo | null; students: Student[]; tags: Tag[]; onTag: (tagId: number, remove: boolean) => void }) {
+function PhotoDetails({ photo, students, tags, canApprove, onTag, onStatus }: { photo: Photo | null; students: Student[]; tags: Tag[]; canApprove: boolean; onTag: (tagId: number, remove: boolean) => void; onStatus: (status: string) => void }) {
   if (!photo) return <aside className="h-fit rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm"><Info className="mb-2 h-5 w-5" />Selecione uma foto para ver os detalhes.</aside>;
   const names = students.filter((student) => photo.student_ids.includes(student.id)).map((student) => student.name);
   return <aside className="h-fit rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:sticky xl:top-5">
@@ -335,6 +344,7 @@ function PhotoDetails({ photo, students, tags, onTag }: { photo: Photo | null; s
       <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Alunos</dt><dd>{names.length ? names.join(", ") : "Ainda não identificados"}</dd></div>
       {photo.description && <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Descrição</dt><dd>{photo.description}</dd></div>}
     </dl>
+    {canApprove && <div className="mt-5 border-t border-slate-200 pt-4"><p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Liberação</p><select value={photo.status} onChange={(event) => void onStatus(event.target.value)} className="input w-full"><option value="PENDING_REVIEW">Aguardando revisão</option><option value="PRIVATE_SCHOOL_ONLY">Somente escola</option><option value="APPROVED_FOR_MARKETING">Aprovada para marketing</option></select></div>}
     <div className="mt-5 border-t border-slate-200 pt-4"><p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Tags</p><div className="flex flex-wrap gap-2">{tags.map((tag) => { const active = photo.tags.some((item) => item.id === tag.id); return <button key={tag.id} onClick={() => void onTag(tag.id, active)} className={`rounded-full border px-2.5 py-1 text-xs ${active ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-300 text-slate-500 hover:bg-slate-50"}`}><TagIcon className="mr-1 inline h-3 w-3" />{tag.name}{active && <X className="ml-1 inline h-3 w-3" />}</button>; })}</div></div>
   </aside>;
 }
