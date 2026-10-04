@@ -67,11 +67,17 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/prisma
 SECRET_KEY=uma-chave-secreta-muito-segura-para-desenvolvimento-local-do-portal-web
 ```
 
-Alimente o Banco de Dados (Seed):
+Recrie e alimente o banco de desenvolvimento (Seed):
 ```bash
 pipenv run python seed.py
 ```
-*(Nota: O script de seed popula contas de pais, crianças e projetos para o TinhaKids!)*
+> Atenção: o seed apaga os dados locais existentes e cria duas escolas para validar o isolamento multi-escola.
+
+Contas principais da Escola Girassol (senha `mypassword`):
+
+- Coordenação: `coordenacao@girassol.com`
+- Professor: `professora@girassol.com`
+- Marketing: `marketing@girassol.com`
 
 Inicie o Servidor:
 ```bash

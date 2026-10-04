@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+import math
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 from PIL import Image
@@ -58,6 +59,10 @@ class FaceAnalysisEngine:
         img_np = np.array(pil_img)
         w, h = pil_img.size
 
+        if w < 64 or h < 64:
+            logger.info(f"Imagem muito pequena para detecção de faces: {image_path}")
+            return []
+
         results = []
 
         if not self._use_fallback and self._app is not None:
@@ -94,10 +99,10 @@ class FaceAnalysisEngine:
         mx = bw * margin_ratio
         my = bh * margin_ratio
 
-        crop_x1 = max(0, int(x1 - mx))
-        crop_y1 = max(0, int(y1 - my))
-        crop_x2 = min(w, int(x2 + mx))
-        crop_y2 = min(h, int(y2 + my))
+        crop_x1 = min(max(0, int(math.floor(x1 - mx))), w - 1)
+        crop_y1 = min(max(0, int(math.floor(y1 - my))), h - 1)
+        crop_x2 = min(w, max(crop_x1 + 1, int(math.ceil(x2 + mx))))
+        crop_y2 = min(h, max(crop_y1 + 1, int(math.ceil(y2 + my))))
 
         crop = pil_img.crop((crop_x1, crop_y1, crop_x2, crop_y2))
         crop.thumbnail((256, 256))
@@ -137,7 +142,7 @@ def cluster_embeddings(
     """
     Agrupa novos embeddings relacionando-os com clusters existentes ou criando novos grupos via DBSCAN.
     Utiliza distância de cosseno calibrada (threshold ~0.48) e comparação com centroides dos clusters.
-    
+
     Retorna:
     - assigned_cluster_ids: lista com o cluster_id atribuído para cada embedding novo (ou None se for criar novo)
     - new_groups: lista de listas de índices que devem formar novos clusters juntos
@@ -218,7 +223,7 @@ def cluster_embeddings(
 
 
 
-def process_image_batch(session, batch_size: int = 10) -> int:
+def process_image_batch(session, batch_size: int = 10, school_id: Optional[int] = None) -> int:
     """
     Executa uma iteração de processamento seguro de lote de imagens via DB Polling com SKIP LOCKED.
     """
@@ -229,10 +234,14 @@ def process_image_batch(session, batch_size: int = 10) -> int:
 
     # 1. Busca segura com SELECT ... FOR UPDATE SKIP LOCKED
     # Previne race condition caso múltiplos workers rodem simultaneamente
-    photos_to_claim = session.query(models.Photo)\
-        .filter(models.Photo.process_status == models.ProcessStatusEnum.PENDING)\
+    query = session.query(models.Photo).join(models.School).filter(
+        models.Photo.process_status == models.ProcessStatusEnum.PENDING, models.School.is_active.is_(True),
+    )
+    if school_id is not None:
+        query = query.filter(models.Photo.school_id == school_id)
+    photos_to_claim = query\
         .order_by(models.Photo.created_at.asc())\
-        .with_for_update(skip_locked=True)\
+        .with_for_update(skip_locked=True, of=models.Photo)\
         .limit(batch_size)\
         .all()
 
@@ -300,14 +309,15 @@ def process_image_batch(session, batch_size: int = 10) -> int:
 
     # 3. Rotina de Re-Clusterização (DBSCAN + Afinidade de Cosseno)
     try:
-        run_clustering_routine(session)
+        for processed_school_id in {photo.school_id for photo in photos_to_claim}:
+            run_clustering_routine(session, school_id=processed_school_id)
     except Exception as e:
         logger.error(f"Erro durante a rotina de clusterização: {e}\n{traceback.format_exc()}")
 
     return processed_count
 
 
-def run_clustering_routine(session):
+def run_clustering_routine(session, school_id: Optional[int] = None):
     """
     Busca todas as faces sem cluster associado e realiza agrupamento DBSCAN
     associando a clusters existentes ou criando novos grupos.
@@ -315,7 +325,13 @@ def run_clustering_routine(session):
     import traceback
     from . import models
 
-    unassigned_faces = session.query(models.DetectedFace)\
+    if school_id is None:
+        for school in session.query(models.School).filter(models.School.is_active.is_(True)).all():
+            run_clustering_routine(session, school_id=school.id)
+        return
+
+    unassigned_faces = session.query(models.DetectedFace).join(models.Photo)\
+        .filter(models.Photo.school_id == school_id)\
         .filter(models.DetectedFace.cluster_id == None)\
         .filter(models.DetectedFace.embedding != None)\
         .all()
@@ -326,11 +342,14 @@ def run_clustering_routine(session):
     logger.info(f"Iniciando rotina de clusterização para {len(unassigned_faces)} faces sem grupo...")
 
     # Carrega clusters existentes e seus embeddings
-    existing_clusters_db = session.query(models.FaceCluster).all()
+    existing_clusters_db = session.query(models.FaceCluster).filter(
+        models.FaceCluster.school_id == school_id,
+        ~models.FaceCluster.faces.any(models.DetectedFace.photo.has(models.Photo.school_id != school_id)),
+    ).all()
     existing_clusters = []
 
     for c in existing_clusters_db:
-        embeddings = [f.embedding for f in c.faces if f.embedding is not None]
+        embeddings = [f.embedding for f in c.faces if f.embedding is not None and f.photo.school_id == school_id]
         if embeddings:
             existing_clusters.append({
                 "id": c.id,
@@ -358,6 +377,7 @@ def run_clustering_routine(session):
         new_cluster_id = uuid.uuid4().hex
         new_cluster = models.FaceCluster(
             id=new_cluster_id,
+            school_id=school_id,
             student_id=None,
             name=f"Pessoa #{new_cluster_id[:6]}",
         )
@@ -372,33 +392,34 @@ def run_clustering_routine(session):
     session.commit()
 
     # 3. Sincroniza vínculos de alunos em fotos para clusters já identificados
-    sync_cluster_student_links(session)
+    sync_cluster_student_links(session, school_id=school_id)
 
 
-def sync_cluster_student_links(session):
+def sync_cluster_student_links(session, school_id: Optional[int] = None):
     """
     Garante que se um cluster possui student_id vinculado, todas as fotos
     que contêm faces desse cluster estejam ligadas ao Aluno correspondente.
     """
     from . import models
 
-    assigned_clusters = session.query(models.FaceCluster)\
-        .filter(models.FaceCluster.student_id != None)\
-        .all()
+    query = session.query(models.FaceCluster).filter(models.FaceCluster.student_id.isnot(None))
+    if school_id is not None:
+        query = query.filter(models.FaceCluster.school_id == school_id)
+    assigned_clusters = query.all()
 
     for c in assigned_clusters:
         student = session.query(models.Student).filter(models.Student.id == c.student_id).first()
-        if not student:
+        if not student or student.school_id != c.school_id:
             continue
 
         for face in c.faces:
-            if face.photo and student not in face.photo.students:
+            if face.photo and face.photo.school_id == c.school_id and student not in face.photo.students:
                 face.photo.students.append(student)
 
     session.commit()
 
 
-def recluster_all_faces(session, distance_threshold: float = 0.48) -> Dict[str, Any]:
+def recluster_all_faces(session, distance_threshold: float = 0.48, school_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Executa agrupamento global de todas as faces detectadas no banco de dados.
     Preserva os vínculos de alunos já existentes onde possível.
@@ -406,7 +427,13 @@ def recluster_all_faces(session, distance_threshold: float = 0.48) -> Dict[str, 
     from . import models
     from sklearn.cluster import DBSCAN
 
-    all_faces = session.query(models.DetectedFace)\
+    if school_id is None:
+        results = [recluster_all_faces(session, distance_threshold, school.id)
+                   for school in session.query(models.School).filter(models.School.is_active.is_(True)).all()]
+        return {key: sum(result[key] for result in results) for key in ("total_faces", "clusters_created")}
+
+    all_faces = session.query(models.DetectedFace).join(models.Photo)\
+        .filter(models.Photo.school_id == school_id)\
         .filter(models.DetectedFace.embedding != None)\
         .all()
 
@@ -415,15 +442,19 @@ def recluster_all_faces(session, distance_threshold: float = 0.48) -> Dict[str, 
 
     # Guarda mapeamento de student_id por cluster anterior
     student_map = {}
-    for c in session.query(models.FaceCluster).all():
-        if c.student_id:
+    for c in session.query(models.FaceCluster).filter(models.FaceCluster.school_id == school_id).all():
+        if c.student and c.student.school_id == school_id:
             for f in c.faces:
                 student_map[f.id] = c.student_id
 
-    # Remove todos os clusters antigos
-    for f in all_faces:
+    # Desvincula somente faces da escola; não exclui faces nem fotos.
+    for f in session.query(models.DetectedFace).join(models.Photo).filter(models.Photo.school_id == school_id).all():
         f.cluster_id = None
-    session.query(models.FaceCluster).delete()
+    session.flush()
+    session.query(models.FaceCluster).filter(
+        models.FaceCluster.school_id == school_id,
+        ~models.FaceCluster.faces.any(models.DetectedFace.photo.has(models.Photo.school_id != school_id)),
+    ).delete(synchronize_session=False)
     session.commit()
 
     embeddings = np.array([f.embedding for f in all_faces], dtype=np.float32)
@@ -454,6 +485,7 @@ def recluster_all_faces(session, distance_threshold: float = 0.48) -> Dict[str, 
 
         new_cluster = models.FaceCluster(
             id=new_cluster_id,
+            school_id=school_id,
             student_id=inherited_student_id,
             name=f"Pessoa #{new_cluster_id[:6]}",
         )
@@ -464,11 +496,9 @@ def recluster_all_faces(session, distance_threshold: float = 0.48) -> Dict[str, 
             all_faces[i].cluster_id = new_cluster_id
 
     session.commit()
-    sync_cluster_student_links(session)
+    sync_cluster_student_links(session, school_id=school_id)
 
     return {
         "total_faces": len(all_faces),
         "clusters_created": clusters_created,
     }
-
-

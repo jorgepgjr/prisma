@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$projectRoot = Join-Path $PSScriptRoot 'prisma'
+$projectRoot = $PSScriptRoot
 $backendRoot = Join-Path $projectRoot 'backend'
 $frontendRoot = Join-Path $projectRoot 'frontend'
 $composeFile = Join-Path $projectRoot 'docker-compose.yml'
@@ -54,10 +54,31 @@ if (-not $shellCommand) {
 }
 $shellPath = $shellCommand.Source
 
-Start-Process -FilePath $shellPath -WorkingDirectory $backendRoot -ArgumentList @(
+$backendProcess = Start-Process -FilePath $shellPath -WorkingDirectory $backendRoot -PassThru -ArgumentList @(
     '-NoExit',
     '-Command',
     'pipenv run uvicorn app.main:app --reload'
+)
+
+$apiReady = $false
+for ($attempt = 0; $attempt -lt 30; $attempt++) {
+    try {
+        Invoke-WebRequest -Uri 'http://localhost:8000/docs' -TimeoutSec 2 -UseBasicParsing *> $null
+        $apiReady = $true
+        break
+    }
+    catch {
+        Start-Sleep -Seconds 1
+    }
+}
+if (-not $apiReady) {
+    throw 'A API não ficou pronta. Confira a janela do backend antes de iniciar o worker.'
+}
+
+Start-Process -FilePath $shellPath -WorkingDirectory $backendRoot -ArgumentList @(
+    '-NoExit',
+    '-Command',
+    'pipenv run python worker.py --interval 3'
 )
 
 Start-Process -FilePath $shellPath -WorkingDirectory $frontendRoot -ArgumentList @(

@@ -94,22 +94,20 @@ export default function FaceProcessingAdminPage() {
   const [selectedPhoto, setSelectedPhoto] = useState<ProcessingPhoto | null>(null);
   const [expandedErrors, setExpandedErrors] = useState<Record<number, boolean>>({});
 
-  const loadData = useCallback(async (showLoading = false) => {
+  const loadData = useCallback(async (showLoading = false, signal?: AbortSignal) => {
+    if (!token || user?.role !== "COORDENADOR" || signal?.aborted) return;
     if (showLoading) setLoading(true);
     try {
+      const options = { headers: { Authorization: `Bearer ${token}` }, signal };
       // 1. Carrega métricas da fila
-      const statusRes = await fetch(`${API_URL}/api/system/processing-status`);
-      if (statusRes.ok) {
-        const countsData = await statusRes.json();
-        setCounts(countsData);
-      }
+      const statusRes = await fetch(`${API_URL}/api/system/processing-status`, options);
+      if (!statusRes.ok) throw new Error("Não foi possível carregar a fila. Verifique sua sessão.");
+      const countsData = await statusRes.json();
 
       // 2. Carrega lista de clusters (Pessoas)
-      const clustersRes = await fetch(`${API_URL}/api/faces/clusters?status=all`);
-      if (clustersRes.ok) {
-        const clustersData = await clustersRes.json();
-        setClusters(clustersData);
-      }
+      const clustersRes = await fetch(`${API_URL}/api/faces/clusters?status=all`, options);
+      if (!clustersRes.ok) throw new Error("Não foi possível carregar os grupos.");
+      const clustersData = await clustersRes.json();
 
       // 3. Carrega lista detalhada de fotos (com filtro por status e/ou por cluster_id)
       let url = `${API_URL}/api/system/processing-photos?status_filter=${activeFilter}&limit=100`;
@@ -117,30 +115,40 @@ export default function FaceProcessingAdminPage() {
         url += `&cluster_id=${encodeURIComponent(selectedClusterId)}`;
       }
 
-      const photosRes = await fetch(url);
-      if (photosRes.ok) {
-        const photosData = await photosRes.json();
-        setPhotos(photosData);
-      }
+      const photosRes = await fetch(url, options);
+      if (!photosRes.ok) throw new Error("Não foi possível carregar as fotos.");
+      const photosData = await photosRes.json();
+      if (signal?.aborted) return;
+      setCounts(countsData);
+      setClusters(clustersData);
+      setPhotos(photosData);
     } catch (err) {
-      console.error("Erro ao carregar dados do processamento:", err);
+      if (signal?.aborted) return;
+      setPhotos([]);
+      setClusters([]);
+      setSelectedPhoto(null);
+      setCounts({ pending: 0, processing: 0, completed: 0, failed: 0, total: 0 });
+      setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Não foi possível atualizar a fila." });
     } finally {
-      if (showLoading) setLoading(false);
+      if (showLoading && !signal?.aborted) setLoading(false);
     }
-  }, [activeFilter, selectedClusterId]);
+  }, [activeFilter, selectedClusterId, token, user?.role]);
 
   // Carga inicial e quando os filtros mudam
   useEffect(() => {
-    void loadData(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => { void loadData(true, controller.signal); }, 0);
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [loadData]);
 
   // Auto-refresh a cada 4 segundos
   useEffect(() => {
     if (!autoRefresh) return;
+    const controller = new AbortController();
     const interval = setInterval(() => {
-      void loadData(false);
+      void loadData(false, controller.signal);
     }, 4000);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); controller.abort(); };
   }, [autoRefresh, loadData]);
 
   // Ação: Disparar Processamento Imediato (Process Now)
@@ -150,6 +158,7 @@ export default function FaceProcessingAdminPage() {
     try {
       const res = await fetch(`${API_URL}/api/system/process-now?batch_size=50`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? "Falha ao iniciar processamento.");
@@ -169,6 +178,7 @@ export default function FaceProcessingAdminPage() {
     try {
       const res = await fetch(`${API_URL}/api/system/ingest-test-folder`, {
         method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? "Falha ao importar pasta de teste.");
@@ -186,12 +196,13 @@ export default function FaceProcessingAdminPage() {
     setActionLoading("reprocess_failed");
     setActionMessage(null);
     try {
-      const res = await fetch(`${API_URL}/api/system/reprocess-failed`, { method: "POST" });
+      const res = await fetch(`${API_URL}/api/system/reprocess-failed`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? "Falha ao re-enfileirar fotos.");
       setActionMessage({ type: "success", text: data.message });
       await loadData(false);
     } catch (err) {
-      setActionMessage({ type: "error", text: "Erro ao re-enfileirar fotos com falha." });
+      setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Erro ao re-enfileirar fotos com falha." });
     } finally {
       setActionLoading(null);
     }
@@ -199,16 +210,17 @@ export default function FaceProcessingAdminPage() {
 
   // Ação: Reprocessar Todas
   async function handleReprocessAll() {
-    if (!confirm("Tem certeza que deseja reprocessar todas as fotos do sistema?")) return;
+    if (!confirm("Tem certeza que deseja reprocessar todas as fotos da sua escola?")) return;
     setActionLoading("reprocess_all");
     setActionMessage(null);
     try {
-      const res = await fetch(`${API_URL}/api/system/reprocess-all`, { method: "POST" });
+      const res = await fetch(`${API_URL}/api/system/reprocess-all`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? "Falha ao re-enfileirar fotos.");
       setActionMessage({ type: "success", text: data.message });
       await loadData(false);
     } catch (err) {
-      setActionMessage({ type: "error", text: "Erro ao re-enfileirar todas as fotos." });
+      setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Erro ao re-enfileirar todas as fotos." });
     } finally {
       setActionLoading(null);
     }
@@ -219,12 +231,13 @@ export default function FaceProcessingAdminPage() {
     setActionLoading("recluster");
     setActionMessage(null);
     try {
-      const res = await fetch(`${API_URL}/api/system/recluster-all`, { method: "POST" });
+      const res = await fetch(`${API_URL}/api/system/recluster-all`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? "Falha ao reagrupar rostos.");
       setActionMessage({ type: "success", text: data.message });
       await loadData(false);
     } catch (err) {
-      setActionMessage({ type: "error", text: "Erro ao reagrupar faces." });
+      setActionMessage({ type: "error", text: err instanceof Error ? err.message : "Erro ao reagrupar faces." });
     } finally {
       setActionLoading(null);
     }
@@ -235,6 +248,10 @@ export default function FaceProcessingAdminPage() {
   }
 
   const activeCluster = clusters.find(c => c.id === selectedClusterId);
+
+  if (!token || user?.role !== "COORDENADOR") {
+    return <main className="p-8"><p>Esta área é exclusiva da coordenação.</p><Link href="/">Voltar ao início</Link></main>;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">

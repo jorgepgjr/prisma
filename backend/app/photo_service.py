@@ -1,77 +1,43 @@
-import os
-import time
-from fastapi import UploadFile, HTTPException, status
+import uuid
+from pathlib import Path
+
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
+
 from .models import Photo, PhotoStatusEnum
 
-# Define o diretório de uploads local (no nível do projeto backend/uploads)
-UPLOAD_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "uploads")
-)
+UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".avif", ".heic", ".heif"}
 
-# Garante que o diretório de uploads existe
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".avif"}
-
-def save_photo(file: UploadFile, session: Session, user_id: int, class_id: int = None) -> Photo:
-    # 1. Validação de extensão do arquivo
-    original_filename = file.filename
-    _, ext = os.path.splitext(original_filename.lower())
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Tipo de arquivo não permitido. Apenas {', '.join(ALLOWED_EXTENSIONS)} são aceitos."
-        )
-
-    # 2. Geração de nome único usando timestamp (milissegundos)
-    unique_filename = f"{int(time.time() * 1000)}{ext}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
-
-    # 3. Escrita do arquivo em disco
+def save_photo(file: UploadFile, session: Session, user_id: int, school_id: int, class_id: int | None = None) -> Photo:
+    suffix = Path(file.filename or "foto.jpg").suffix.lower()
+    if suffix not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Tipo de arquivo não permitido.")
+    relative_path = Path(str(school_id)) / f"{uuid.uuid4().hex}{suffix}"
+    destination = UPLOAD_DIR / relative_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(file_path, "wb") as buffer:
-            # Lê o conteúdo do UploadFile em blocos para evitar sobrecarga de memória
+        with destination.open("wb") as buffer:
             while content := file.file.read(1024 * 1024):
                 buffer.write(content)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao salvar arquivo localmente: {str(e)}"
+        photo = Photo(
+            school_id=school_id, file_path=relative_path.as_posix(), title=file.filename,
+            uploaded_by_user_id=user_id, class_id=class_id, status=PhotoStatusEnum.PENDING_REVIEW,
         )
-
-    # 4. Gravação dos metadados no banco de dados
-    new_photo = Photo(
-        file_id=unique_filename,
-        title=original_filename,
-        uploaded_by_user_id=user_id,
-        class_id=class_id,
-        status=PhotoStatusEnum.PENDING_REVIEW
-    )
-    
-    try:
-        session.add(new_photo)
+        session.add(photo)
         session.commit()
-        session.refresh(new_photo)
-    except Exception as e:
-        # Em caso de falha no banco de dados, removemos o arquivo salvo para evitar lixo no disco
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao salvar registro de foto no banco de dados: {str(e)}"
-        )
+        session.refresh(photo)
+        return photo
+    except Exception as error:
+        session.rollback()
+        destination.unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro ao salvar a foto.") from error
 
-    return new_photo
 
 def get_photo_path(file_id: str) -> str:
-    # Evita Directory Traversal garantindo que apenas o nome do arquivo seja usado
-    filename = os.path.basename(file_id)
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    
-    if not os.path.exists(file_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Arquivo de foto não encontrado."
-        )
-    return file_path
+    root = UPLOAD_DIR.resolve()
+    path = (root / file_id).resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="Arquivo de foto não encontrado.")
+    return str(path)

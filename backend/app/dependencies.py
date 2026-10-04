@@ -25,7 +25,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Dep
         raise credentials_exception
     
     user = session.query(User).filter(User.email == token_data.email).first()
-    if user is None:
+    if user is None or not user.is_active or not user.school or not user.school.is_active:
         raise credentials_exception
     return user
 

@@ -14,19 +14,15 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type Tag = { id: number; name: string };
 type Photo = {
-  id: number; file_path: string; title?: string; description?: string;
-  uploader_name?: string; created_at: string; student_ids: number[]; tags: Tag[];
+  id: number; file_path: string; media_url: string; title?: string; description?: string;
+  uploader_name?: string; created_at: string; status: string; student_ids: number[]; tags: Tag[];
 };
 type Student = { id: number; name: string; child_id?: string | null };
-type FamilyChild = {
-  id: string; name: string; classroom: string; parent_names: string[];
-  parent_emails: string[]; linked_student_id?: number | null;
-};
 type ManagedPost = {
   id: string; image_url: string; image_urls: string[]; caption: string;
   teacher_name: string; child_names: string[]; created_at: string;
 };
-type ModalKind = "post" | "portfolio" | "family" | null;
+type ModalKind = "post" | "portfolio" | null;
 
 function detailFrom(data: unknown, fallback: string) {
   if (typeof data === "object" && data && "detail" in data && typeof data.detail === "string") return data.detail;
@@ -34,7 +30,7 @@ function detailFrom(data: unknown, fallback: string) {
 }
 
 function photoUrl(photo: Photo) {
-  return `${API_URL}/api/photos/file/${encodeURIComponent(photo.file_path)}`;
+  return photo.media_url.startsWith("http") ? photo.media_url : `${API_URL}${photo.media_url}`;
 }
 
 function signedUrl(value: string) {
@@ -54,14 +50,13 @@ function monthLabel(date: string) {
 export default function ClassPage() {
   const params = useParams<{ id: string }>();
   const classId = Number(params.id);
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [posts, setPosts] = useState<ManagedPost[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
-  const [families, setFamilies] = useState<FamilyChild[]>([]);
   const [activePhotoId, setActivePhotoId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<number[]>([]);
@@ -72,8 +67,6 @@ export default function ClassPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [modal, setModal] = useState<ModalKind>(null);
-  const [familyStudent, setFamilyStudent] = useState<Student | null>(null);
-  const [familyChildId, setFamilyChildId] = useState("");
   const [caption, setCaption] = useState("");
   const [portfolioTitle, setPortfolioTitle] = useState("");
   const [portfolioDescription, setPortfolioDescription] = useState("");
@@ -88,20 +81,19 @@ export default function ClassPage() {
     setLoading(true);
     setError("");
     try {
-      const responses = await Promise.all([
+      const requests = [
         fetch(`${API_URL}/api/photos/class/${classId}`, { headers }),
         fetch(`${API_URL}/api/students/class/${classId}`, { headers }),
         fetch(`${API_URL}/api/posts/?class_id=${classId}`, { headers }),
         fetch(`${API_URL}/api/tags/`, { headers }),
-        fetch(`${API_URL}/api/families/children`, { headers }),
-      ]);
+      ];
+      const responses = await Promise.all(requests);
       if (responses.some((response) => !response.ok)) throw new Error("Não foi possível carregar os dados da turma.");
-      const [photoData, studentData, postData, tagData, familyData] = await Promise.all(responses.map((response) => response.json()));
+      const [photoData, studentData, postData, tagData] = await Promise.all(responses.map((response) => response.json()));
       setPhotos(photoData);
       setStudents(studentData);
       setPosts(postData);
       setTags(tagData);
-      setFamilies(familyData);
       setActivePhotoId((current) => current ?? photoData[0]?.id ?? null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Erro ao carregar a turma.");
@@ -202,51 +194,11 @@ export default function ClassPage() {
     await loadData();
   }
 
-  function openFamily(student: Student) {
-    setFamilyStudent(student);
-    setFamilyChildId(student.child_id ?? "");
-    setModal("family");
-  }
-
-  async function saveFamilyLink() {
-    if (!familyStudent) return;
-    setSaving(true);
-    setError("");
-    try {
-      const response = await fetch(`${API_URL}/api/families/students/${familyStudent.id}`, {
-        method: "PUT", headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ child_id: familyChildId || null }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(detailFrom(data, "Não foi possível salvar o vínculo."));
-      setMessage(`${familyStudent.name} foi vinculado ao perfil familiar.`);
-      setModal(null);
-      await loadData();
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Não foi possível salvar o vínculo.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function createFamilyProfile(payload: { parent_name: string; parent_email: string; parent_phone: string; initial_password: string }) {
-    if (!familyStudent) return;
-    setSaving(true);
-    setError("");
-    try {
-      const response = await fetch(`${API_URL}/api/families/students/${familyStudent.id}`, {
-        method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(payload),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(detailFrom(data, "Não foi possível cadastrar a família."));
-      setMessage(`Responsável cadastrado e vinculado a ${familyStudent.name}.`);
-      setModal(null);
-      await loadData();
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Não foi possível cadastrar a família.");
-    } finally {
-      setSaving(false);
-    }
+  async function updateStatus(status: string) {
+    if (!activePhoto) return;
+    const response = await fetch(`${API_URL}/api/photos/${activePhoto.id}/status`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    if (!response.ok) { const data = await response.json(); setError(detailFrom(data, "Não foi possível atualizar a liberação.")); return; }
+    setMessage("Situação da foto atualizada."); await loadData();
   }
 
   return (
@@ -302,8 +254,8 @@ export default function ClassPage() {
 
               <div className="grid gap-5 lg:grid-cols-2">
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <h2 className="mb-3 font-semibold">Vínculos familiares</h2>
-                  <div className="space-y-2">{students.map((student) => <div key={student.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3"><div className={`grid h-9 w-9 place-items-center rounded-full ${student.child_id ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}><UserRoundCheck className="h-4 w-4" /></div><div className="min-w-0 flex-1"><p className="text-sm font-medium">{student.name}</p><p className="truncate text-xs text-slate-500">{student.child_id ? `Perfil: ${student.child_id}` : "Sem responsável vinculado"}</p></div><button onClick={() => openFamily(student)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50">{student.child_id ? "Alterar" : "Vincular"}</button></div>)}</div>
+                  <h2 className="mb-3 font-semibold">Alunos</h2>
+                  {students.length === 0 ? <p className="text-sm text-slate-500">Nenhum aluno nesta turma.</p> : <div className="space-y-2">{students.map((student) => <div key={student.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3"><UserRoundCheck className="h-4 w-4 text-blue-600" /><p className="min-w-0 flex-1 text-sm font-medium">{student.name}</p><button onClick={() => { setStudentFilter(String(student.id)); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50">Ver fotos</button></div>)}</div>}
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <h2 className="mb-3 font-semibold">Publicações recentes</h2>
@@ -312,18 +264,17 @@ export default function ClassPage() {
               </div>
             </section>
 
-            <PhotoDetails photo={activePhoto} students={students} tags={tags} onTag={updateTag} />
+            <PhotoDetails photo={activePhoto} students={students} tags={tags} canApprove={user?.role === "COORDENADOR"} onTag={updateTag} onStatus={updateStatus} />
           </div>
         )}
       </main>
 
       {(modal === "post" || modal === "portfolio") && <ActionModal kind={modal} photos={photos.filter((photo) => actionPhotoIds.includes(photo.id))} students={students} selectedStudents={selectedStudents} onToggleStudent={toggleStudent} caption={caption} setCaption={setCaption} portfolioTitle={portfolioTitle} setPortfolioTitle={setPortfolioTitle} portfolioDescription={portfolioDescription} setPortfolioDescription={setPortfolioDescription} objectives={objectives} setObjectives={setObjectives} saving={saving} onClose={() => setModal(null)} onSave={modal === "post" ? savePost : savePortfolio} />}
-      {modal === "family" && familyStudent && <FamilyModal student={familyStudent} families={families} selected={familyChildId} setSelected={setFamilyChildId} saving={saving} onClose={() => setModal(null)} onSave={saveFamilyLink} onCreate={createFamilyProfile} />}
     </div>
   );
 }
 
-function PhotoDetails({ photo, students, tags, onTag }: { photo: Photo | null; students: Student[]; tags: Tag[]; onTag: (tagId: number, remove: boolean) => void }) {
+function PhotoDetails({ photo, students, tags, canApprove, onTag, onStatus }: { photo: Photo | null; students: Student[]; tags: Tag[]; canApprove: boolean; onTag: (tagId: number, remove: boolean) => void; onStatus: (status: string) => void }) {
   if (!photo) return <aside className="h-fit rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm"><Info className="mb-2 h-5 w-5" />Selecione uma foto para ver os detalhes.</aside>;
   const names = students.filter((student) => photo.student_ids.includes(student.id)).map((student) => student.name);
   return <aside className="h-fit rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:sticky xl:top-5">
@@ -335,6 +286,7 @@ function PhotoDetails({ photo, students, tags, onTag }: { photo: Photo | null; s
       <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Alunos</dt><dd>{names.length ? names.join(", ") : "Ainda não identificados"}</dd></div>
       {photo.description && <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Descrição</dt><dd>{photo.description}</dd></div>}
     </dl>
+    {canApprove && <div className="mt-5 border-t border-slate-200 pt-4"><p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Liberação</p><select value={photo.status} onChange={(event) => void onStatus(event.target.value)} className="input w-full"><option value="PENDING_REVIEW">Aguardando revisão</option><option value="PRIVATE_SCHOOL_ONLY">Somente escola</option><option value="APPROVED_FOR_MARKETING">Aprovada para marketing</option></select></div>}
     <div className="mt-5 border-t border-slate-200 pt-4"><p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Tags</p><div className="flex flex-wrap gap-2">{tags.map((tag) => { const active = photo.tags.some((item) => item.id === tag.id); return <button key={tag.id} onClick={() => void onTag(tag.id, active)} className={`rounded-full border px-2.5 py-1 text-xs ${active ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-300 text-slate-500 hover:bg-slate-50"}`}><TagIcon className="mr-1 inline h-3 w-3" />{tag.name}{active && <X className="ml-1 inline h-3 w-3" />}</button>; })}</div></div>
   </aside>;
 }
@@ -355,26 +307,6 @@ function ActionModal(props: {
     <p className="mb-2 text-sm font-medium">Alunos</p>
     <div className="mb-5 max-h-48 space-y-1 overflow-y-auto rounded-xl border border-slate-200 p-2">{props.students.map((student) => <label key={student.id} className={`flex items-center gap-3 rounded-lg p-2 text-sm ${student.child_id ? "cursor-pointer hover:bg-slate-50" : "cursor-not-allowed bg-slate-50 text-slate-400"}`}><input type="checkbox" disabled={!student.child_id} checked={props.selectedStudents.includes(student.id)} onChange={() => props.onToggleStudent(student.id)} /><span className="flex-1">{student.name}</span>{!student.child_id && <span className="text-[10px]">sem vínculo familiar</span>}</label>)}</div>
     <button onClick={props.onSave} disabled={props.saving || !valid} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{props.saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : isPost ? <Send className="h-4 w-4" /> : <FileImage className="h-4 w-4" />}{isPost ? "Publicar para as famílias" : "Criar portfólio"}</button>
-  </Modal>;
-}
-
-function FamilyModal({ student, families, selected, setSelected, saving, onClose, onSave, onCreate }: { student: Student; families: FamilyChild[]; selected: string; setSelected: (value: string) => void; saving: boolean; onClose: () => void; onSave: () => void; onCreate: (payload: { parent_name: string; parent_email: string; parent_phone: string; initial_password: string }) => Promise<void> }) {
-  const available = families.filter((family) => !family.linked_student_id || family.linked_student_id === student.id);
-  const family = families.find((item) => item.id === selected);
-  const [parentName, setParentName] = useState("");
-  const [parentEmail, setParentEmail] = useState("");
-  const [parentPhone, setParentPhone] = useState("");
-  const [initialPassword, setInitialPassword] = useState("");
-  const canCreate = parentName.trim().length >= 2 && parentEmail.includes("@") && initialPassword.length >= 6;
-  return <Modal title={`Vincular ${student.name}`} onClose={onClose}>
-    <p className="mb-4 text-sm text-slate-600">Escolha o perfil da criança que já pertence à conta de um responsável no TinhaKids.</p>
-    <select value={selected} onChange={(event) => setSelected(event.target.value)} className="input mb-4 w-full"><option value="">Sem vínculo</option>{available.map((item) => <option key={item.id} value={item.id}>{item.name} — {item.classroom}</option>)}</select>
-    {family && <div className="mb-5 rounded-xl bg-slate-50 p-3 text-sm"><p className="font-medium">Responsáveis</p><p className="mt-1 text-slate-600">{family.parent_names.join(", ") || "Nome não informado"}</p><p className="text-xs text-slate-500">{family.parent_emails.join(", ")}</p></div>}
-    <button onClick={onSave} disabled={saving || !selected} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white disabled:opacity-50">{saving && <LoaderCircle className="h-4 w-4 animate-spin" />}Usar perfil existente</button>
-    {!student.child_id && <><div className="my-5 flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-slate-400"><span className="h-px flex-1 bg-slate-200" />ou cadastre a família<span className="h-px flex-1 bg-slate-200" /></div>
-      <div className="grid gap-3 sm:grid-cols-2"><input className="input" value={parentName} onChange={(event) => setParentName(event.target.value)} placeholder="Nome do responsável" /><input className="input" type="email" value={parentEmail} onChange={(event) => setParentEmail(event.target.value)} placeholder="E-mail" /><input className="input" value={parentPhone} onChange={(event) => setParentPhone(event.target.value)} placeholder="Telefone (opcional)" /><input className="input" type="password" value={initialPassword} onChange={(event) => setInitialPassword(event.target.value)} placeholder="Senha inicial (mín. 6)" /></div>
-      <p className="my-3 text-xs text-slate-500">A conta fica ativa imediatamente e o responsável já pode entrar no TinhaKids com o e-mail e a senha inicial.</p>
-      <button onClick={() => void onCreate({ parent_name: parentName, parent_email: parentEmail, parent_phone: parentPhone, initial_password: initialPassword })} disabled={saving || !canCreate} className="flex w-full items-center justify-center gap-2 rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700 disabled:opacity-50">{saving && <LoaderCircle className="h-4 w-4 animate-spin" />}Cadastrar e vincular</button></>}
   </Modal>;
 }
 

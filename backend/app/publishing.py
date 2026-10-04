@@ -35,12 +35,14 @@ def list_school_posts(
 ):
     if not can_access_class(current_user, class_id):
         raise HTTPException(status_code=403, detail="Você não tem acesso a esta turma.")
-    school_class = session.query(models.Class).filter(models.Class.id == class_id).first()
+    school_class = session.query(models.Class).filter(
+        models.Class.id == class_id, models.Class.school_id == current_user.school_id
+    ).first()
     if not school_class:
         raise HTTPException(status_code=404, detail="Turma não encontrada.")
     posts = (
         session.query(models.Post)
-        .filter(models.Post.classroom_name == school_class.name)
+        .filter(models.Post.school_id == current_user.school_id, models.Post.classroom_name == school_class.name)
         .order_by(models.Post.created_at.desc())
         .all()
     )
@@ -62,7 +64,9 @@ def create_school_post(
         raise HTTPException(status_code=422, detail="Selecione ao menos uma foto.")
 
     selected_photo_ids = list(dict.fromkeys(payload.photo_ids))
-    photos = session.query(models.Photo).filter(models.Photo.id.in_(selected_photo_ids)).all()
+    photos = session.query(models.Photo).filter(
+        models.Photo.school_id == current_user.school_id, models.Photo.id.in_(selected_photo_ids)
+    ).all()
     if len(photos) != len(selected_photo_ids) or any(photo.class_id is None for photo in photos):
         raise HTTPException(status_code=404, detail="Uma ou mais fotos não foram encontradas.")
     class_id = photos[0].class_id
@@ -72,7 +76,9 @@ def create_school_post(
         raise HTTPException(status_code=403, detail="Você não tem acesso a estas fotos.")
 
     selected_ids = set(payload.student_ids)
-    students = session.query(models.Student).filter(models.Student.id.in_(selected_ids)).all()
+    students = session.query(models.Student).filter(
+        models.Student.school_id == current_user.school_id, models.Student.id.in_(selected_ids)
+    ).all()
     if len(students) != len(selected_ids) or any(student.class_id != class_id for student in students):
         raise HTTPException(status_code=422, detail="Todos os alunos devem pertencer à turma da foto.")
 
@@ -83,6 +89,7 @@ def create_school_post(
 
     post = models.Post(
         id=str(uuid.uuid4()),
+        school_id=current_user.school_id,
         classroom_name=photos[0].school_class.name,
         teacher_name=current_user.name,
         teacher_avatar_url="",
