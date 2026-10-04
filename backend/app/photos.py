@@ -33,6 +33,7 @@ def require_class_access(user: models.User, class_id: int, session: Session) -> 
 
 
 def serialize_photo(photo: models.Photo) -> schemas.PhotoResponse:
+    detected_count = len(photo.detected_faces) if hasattr(photo, "detected_faces") and photo.detected_faces else 0
     return schemas.PhotoResponse(
         id=photo.id, file_path=photo.file_path,
         media_url=security.generatePresignedUrl(photo.file_path), title=photo.title,
@@ -40,9 +41,16 @@ def serialize_photo(photo: models.Photo) -> schemas.PhotoResponse:
         uploader_name=photo.uploader.name if photo.uploader else None,
         class_id=photo.class_id,
         class_name=photo.school_class.name if photo.school_class else None,
-        status=photo.status.value, created_at=photo.created_at,
-        student_ids=[student.id for student in photo.students], tags=photo.tags,
+        status=photo.status.value,
+        process_status=photo.process_status.value if hasattr(photo, "process_status") and photo.process_status else "PENDING",
+        process_attempts=photo.process_attempts if hasattr(photo, "process_attempts") else 0,
+        process_error=photo.process_error if hasattr(photo, "process_error") else None,
+        detected_faces_count=detected_count,
+        created_at=photo.created_at,
+        student_ids=[student.id for student in photo.students],
+        tags=photo.tags,
     )
+
 
 
 @router.post("/upload", response_model=schemas.PhotoResponse, status_code=status.HTTP_201_CREATED)

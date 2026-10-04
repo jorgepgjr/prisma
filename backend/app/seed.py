@@ -1,15 +1,19 @@
-import base64
+import json
+import uuid
+from datetime import datetime
 from pathlib import Path
 
+from PIL import Image, ImageDraw
 from sqlalchemy import text
 
 from .db import SessionLocal, engine
 from .models import (
-    Base, Class, Photo, PhotoStatusEnum, RoleEnum, School, Student, User,
+    Base, Child, Class, Parent, Photo, PhotoStatusEnum, Post, ProcessStatusEnum,
+    Project, RoleEnum, School, Student, User,
 )
+from .security import get_password_hash
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
-PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
 
 
 def create_school(session, name: str, slug: str):
@@ -33,19 +37,54 @@ def create_school(session, name: str, slug: str):
     session.add_all([coordinator, teacher, marketing, school_class])
     session.flush()
     students = [
-        Student(school_id=school.id, class_id=school_class.id, name="Pedro", marketing_allowed=True),
+        Student(school_id=school.id, class_id=school_class.id,
+                name="FILHO TESTE" if slug == "girassol" else "Pedro", marketing_allowed=True),
         Student(school_id=school.id, class_id=school_class.id, name="Sofia", marketing_allowed=True),
     ]
     session.add_all(students)
-    relative_path = Path(str(school.id)) / "foto-exemplo.png"
-    destination = UPLOAD_DIR / relative_path
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(PIXEL)
-    session.add(Photo(
-        school_id=school.id, file_path=relative_path.as_posix(), title="Foto de exemplo",
-        uploaded_by_user_id=teacher.id, class_id=school_class.id,
-        status=PhotoStatusEnum.APPROVED_FOR_MARKETING,
-    ))
+    # Cada responsável recebe somente um aluno, com conteúdo distinto para
+    # validar o isolamento familiar tanto na mesma escola quanto entre escolas.
+    for index, student in enumerate(students):
+        child = Child(id=str(uuid.uuid4()), school_id=school.id, name=student.name,
+                      classroom=school_class.name, avatar_path="")
+        student.child_profile = child
+        parent = Parent(
+            id=str(uuid.uuid4()), school_id=school.id,
+            name="PAI TESTE" if index == 0 else "MÃE SOFIA",
+            email=f"{'pai.teste' if index == 0 else 'mae.sofia'}@{slug}.com",
+            hashed_password=get_password_hash("mypassword"), is_active=True,
+        )
+        parent.children.append(child)
+        relative_path = Path(str(school.id)) / f"exemplo-{uuid.uuid4()}.png"
+        destination = UPLOAD_DIR / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        image = Image.new("RGB", (640, 420), "#dbeafe" if index == 0 else "#fce7f3")
+        drawing = ImageDraw.Draw(image)
+        drawing.text((40, 160), f"FOTO DE TESTE - {student.name}", fill="#1e293b")
+        drawing.text((40, 190), name, fill="#1e293b")
+        image.save(destination)
+        photo = Photo(
+            school_id=school.id, file_path=relative_path.as_posix(),
+            title=f"Foto de teste - {student.name}", uploaded_by_user_id=teacher.id,
+            class_id=school_class.id, status=PhotoStatusEnum.APPROVED_FOR_MARKETING,
+            process_status=ProcessStatusEnum.COMPLETED,
+        )
+        photo.students.append(student)
+        post = Post(
+            id=str(uuid.uuid4()), school_id=school.id, classroom_name=school_class.name,
+            teacher_name=teacher.name, teacher_avatar_url="", image_path=photo.file_path,
+            caption=f"Publicação de teste de {student.name}",
+        )
+        post.children.append(child)
+        post.photos.append(photo)
+        project = Project(
+            id=str(uuid.uuid4()), school_id=school.id, child=child,
+            title=f"Portfólio de teste de {student.name}", image_path=photo.file_path,
+            completion_date=datetime.utcnow(), description="Atividade de demonstração.",
+            pedagogical_objectives=json.dumps(["Explorar cores"]),
+        )
+        project.photos.append(photo)
+        session.add_all([parent, child, photo, post, project])
 
 
 def seed_data():

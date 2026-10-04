@@ -53,7 +53,9 @@ def activate_account(req: ActivateAccount, session: Session = Depends(db.get_db)
     # Simulação: Como não salvamos o token real no banco neste boilerplate,
     # vamos apenas aprovar quem não tem senha ainda como demonstração.
     # Numa aplicação real, buscaríamos pelo token.
-    parent = session.query(models.Parent).filter(models.Parent.is_active == False).first()
+    parent = session.query(models.Parent).filter(
+        models.Parent.is_active == False, models.Parent.hashed_password.is_(None),
+    ).first()
     
     if not parent:
         raise HTTPException(status_code=400, detail="Nenhuma conta aguardando ativação ou token inválido.")
@@ -68,11 +70,12 @@ def activate_account(req: ActivateAccount, session: Session = Depends(db.get_db)
 
 @router.post("/login", response_model=Token)
 def login(req: LoginRequest, session: Session = Depends(db.get_db)):
+    identifier = req.identifier.strip().lower()
     parent = session.query(models.Parent).filter(
-        (models.Parent.email == req.identifier) | (models.Parent.phone == req.identifier)
+        (models.Parent.email == identifier) | (models.Parent.phone == identifier)
     ).first()
     
-    if not parent or not parent.is_active:
+    if not parent or not parent.is_active or not security.parent_school_is_active(parent, session):
         raise HTTPException(status_code=401, detail="Credenciais inválidas ou conta inativa.")
         
     if not parent.hashed_password or not security.verify_password(req.password, parent.hashed_password):
@@ -96,7 +99,8 @@ def google_login(req: GoogleLogin, session: Session = Depends(db.get_db)):
     
     if not parent:
         raise HTTPException(status_code=403, detail="Email não pré-cadastrado na escola.")
-        
+    if not parent.is_active or not security.parent_school_is_active(parent, session):
+        raise HTTPException(status_code=403, detail="Conta inativa. Solicite a ativação à coordenação.")
     # Vincula o google_id e ativa se ainda não estava
     parent.google_id = google_id
     parent.is_active = True

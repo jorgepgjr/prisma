@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Integer, String, Table, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint
 from sqlalchemy.orm import relationship, validates
 
 from .db import Base
@@ -19,6 +19,11 @@ class PhotoStatusEnum(enum.Enum):
     APPROVED_FOR_MARKETING = "APPROVED_FOR_MARKETING"
     PRIVATE_SCHOOL_ONLY = "PRIVATE_SCHOOL_ONLY"
 
+class ProcessStatusEnum(enum.Enum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 class StudentStatusEnum(enum.Enum):
     ATIVO = "ATIVO"
@@ -150,17 +155,23 @@ class Photo(Base):
     status = Column(SQLEnum(PhotoStatusEnum), default=PhotoStatusEnum.PENDING_REVIEW, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     school = relationship("School", back_populates="photos")
+    process_status = Column(SQLEnum(ProcessStatusEnum), default=ProcessStatusEnum.PENDING, nullable=False)
+    process_attempts = Column(Integer, default=0, nullable=False)
+    process_error = Column(Text, nullable=True)
     uploader = relationship("User", back_populates="uploaded_photos")
     school_class = relationship("Class", back_populates="photos")
     students = relationship("Student", secondary=photo_student_link, back_populates="photos")
     tags = relationship("Tag", secondary=photo_tag_link, back_populates="photos")
     posts = relationship("Post", secondary=post_photo_link, back_populates="photos")
     projects = relationship("Project", secondary=project_photo_link, back_populates="photos")
+    detected_faces = relationship("DetectedFace", back_populates="photo", cascade="all, delete-orphan")
 
 
 class Parent(Base):
     __tablename__ = "parents"
     id = Column(String, primary_key=True, index=True)
+    # Nullable somente para contas antigas sem escola identificável.
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=True, index=True)
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     phone = Column(String, unique=True, index=True, nullable=True)
@@ -215,3 +226,29 @@ class Project(Base):
     school = relationship("School")
     child = relationship("Child", back_populates="projects")
     photos = relationship("Photo", secondary=project_photo_link, back_populates="projects")
+
+class FaceCluster(Base):
+    __tablename__ = 'face_clusters'
+
+    id = Column(String, primary_key=True, index=True)  # UUID
+    student_id = Column(Integer, ForeignKey('students.id', ondelete="SET NULL"), nullable=True)
+    name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    student = relationship("Student", backref="face_clusters")
+    faces = relationship("DetectedFace", back_populates="cluster", cascade="all, delete-orphan")
+
+class DetectedFace(Base):
+    __tablename__ = 'detected_faces'
+
+    id = Column(String, primary_key=True, index=True)  # UUID
+    photo_id = Column(Integer, ForeignKey('photos.id', ondelete="CASCADE"), nullable=False)
+    cluster_id = Column(String, ForeignKey('face_clusters.id', ondelete="SET NULL"), nullable=True)
+    bounding_box = Column(JSON, nullable=False)  # [x1, y1, x2, y2]
+    embedding = Column(JSON, nullable=True)  # List[float] (512-dim embedding)
+    face_crop_path = Column(String, nullable=True)
+    detection_score = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    photo = relationship("Photo", back_populates="detected_faces")
+    cluster = relationship("FaceCluster", back_populates="faces")

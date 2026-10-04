@@ -5,7 +5,6 @@ from pydantic import BaseModel, EmailStr, Field
 
 from .models import PhotoStatusEnum, RoleEnum
 
-
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -110,6 +109,10 @@ class PhotoResponse(BaseModel):
     class_id: Optional[int] = None
     class_name: Optional[str] = None
     status: str
+    process_status: Optional[str] = "PENDING"
+    process_attempts: int = 0
+    process_error: Optional[str] = None
+    detected_faces_count: int = 0
     created_at: datetime
     student_ids: List[int] = []
     tags: List[TagResponse] = []
@@ -124,10 +127,11 @@ class StudentBase(BaseModel):
 
 
 class StudentCreate(StudentBase):
-    pass
+    parent_ids: List[str] = []
 
 
 class StudentUpdate(BaseModel):
+    parent_ids: Optional[List[str]] = None
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     class_id: Optional[int] = None
     marketing_allowed: Optional[bool] = None
@@ -135,6 +139,7 @@ class StudentUpdate(BaseModel):
 
 
 class StudentResponse(StudentBase):
+    parent_ids: List[str] = []
     id: int
     school_id: int
     status: str
@@ -180,6 +185,32 @@ class FamilyAccountCreate(BaseModel):
     parent_email: EmailStr
     parent_phone: Optional[str] = None
     initial_password: Optional[str] = None
+
+
+class FamilyParentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    email: EmailStr
+    phone: Optional[str] = None
+    password: str = Field(min_length=6)
+    student_ids: List[int] = []
+
+
+class FamilyParentUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=120)
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    password: Optional[str] = Field(default=None, min_length=6)
+    is_active: Optional[bool] = None
+    student_ids: Optional[List[int]] = None
+
+
+class FamilyParentResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    phone: Optional[str] = None
+    is_active: bool
+    student_ids: List[int] = []
 
 
 class ChildResponse(BaseModel):
@@ -248,3 +279,73 @@ class PortfolioCreate(BaseModel):
     title: str
     description: str
     pedagogical_objectives: List[str] = []
+
+# --- Face Recognition & Clustering Schemas ---
+
+class DetectedFaceResponse(BaseModel):
+    id: str
+    photo_id: int
+    cluster_id: Optional[str] = None
+    bounding_box: List[float] = []
+    face_crop_url: Optional[str] = None
+    detection_score: Optional[float] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class FaceClusterResponse(BaseModel):
+    id: str
+    student_id: Optional[int] = None
+    student_name: Optional[str] = None
+    student_class_name: Optional[str] = None
+    name: Optional[str] = None
+    face_count: int = 0
+    photo_count: int = 0
+    sample_face_crops: List[str] = []
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class FaceClusterAssignRequest(BaseModel):
+    student_id: int
+
+class SystemProcessingStatusResponse(BaseModel):
+    pending: int
+    processing: int
+    completed: int
+    failed: int
+    total: int
+
+class DetectedFaceDetail(BaseModel):
+    id: str
+    bounding_box: List[float] = []
+    face_crop_url: Optional[str] = None
+    detection_score: Optional[float] = None
+    cluster_id: Optional[str] = None
+    cluster_name: Optional[str] = None
+    student_id: Optional[int] = None
+    student_name: Optional[str] = None
+
+class ProcessingPhotoDetail(BaseModel):
+    id: int
+    file_path: str
+    image_url: str
+    class_id: Optional[int] = None
+    class_name: Optional[str] = None
+    process_status: str
+    process_attempts: int
+    process_error: Optional[str] = None
+    created_at: datetime
+    detected_faces: List[DetectedFaceDetail] = []
+
+class IngestTestFolderResponse(BaseModel):
+    imported_count: int
+    skipped_count: int
+    total_found: int
+    message: str
+
+class ProcessNowResponse(BaseModel):
+    processed_count: int
+    message: str

@@ -15,3 +15,7 @@ frontend/out/
 # Local uploads and operating-system files
 .DS_Store
 Thumbs.db
+
+# Test images
+backend/test_images/
+backend/uploads/

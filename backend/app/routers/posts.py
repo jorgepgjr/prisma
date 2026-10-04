@@ -14,12 +14,17 @@ def get_posts(
     Retorna o feed de fotos onde a criança está marcada.
     Valida o acesso usando `verifyChildAccess`.
     """
-    posts = sorted(child.posts, key=lambda item: item.created_at, reverse=True)
+    posts = sorted((post for post in child.posts if post.school_id == child.school_id),
+                   key=lambda item: item.created_at, reverse=True)
     
     # Prepara a resposta injetando a URL assinada (Pre-signed URL simulada)
     response_posts = []
     for post in posts:
-        paths = [photo.file_path for photo in post.photos] or [post.image_path]
+        paths = [photo.file_path for photo in post.photos if photo.school_id == child.school_id]
+        if not paths:
+            if post.photos:
+                continue
+            paths = [post.image_path]
         post_dict = {
             "id": post.id,
             "classroom_name": post.classroom_name,

@@ -16,10 +16,14 @@ from .publishing import router as publishing_router
 from .families import router as families_router
 from .school_portfolio import router as school_portfolio_router
 from .admin_api import router as admin_router
+from .routers.faces import router as faces_router
+from .routers.system import router as system_router
+from .schema_migrations import ensure_photo_processing_columns, ensure_parent_school_column
 
-# Cria as tabelas do banco de dados (útil para desenvolvimento, 
-# em produção recomenda-se usar Alembic)
+# Cria as tabelas do banco de dados (útil para desenvolvimento, em produção recomenda-se usar migrações)
 models.Base.metadata.create_all(bind=engine)
+ensure_photo_processing_columns()
+ensure_parent_school_column()
 
 app = FastAPI(
     title="Portal Web para Galeria Escolar",
@@ -69,6 +73,8 @@ app.include_router(publishing_router, prefix="/api/posts", tags=["Publicações"
 app.include_router(families_router, prefix="/api/families", tags=["Famílias"])
 app.include_router(school_portfolio_router, prefix="/api/portfolio", tags=["Portfólios"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Administração"])
+app.include_router(faces_router, prefix="/api/faces", tags=["Reconhecimento Facial"])
+app.include_router(system_router, prefix="/api/system", tags=["Sistema & Fila"])
 
 # TinhaKids API v1 (Visão dos Pais)
 app.include_router(auth_parents_router, prefix="/api/v1/auth", tags=["TinhaKids - Auth"])
