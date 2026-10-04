@@ -18,12 +18,15 @@ from .school_portfolio import router as school_portfolio_router
 from .admin_api import router as admin_router
 from .routers.faces import router as faces_router
 from .routers.system import router as system_router
-from .schema_migrations import ensure_photo_processing_columns, ensure_parent_school_column
+from .schema_migrations import (ensure_photo_processing_columns, ensure_parent_school_column,
+                                ensure_parent_account_fields, ensure_face_cluster_school_column)
 
 # Cria as tabelas do banco de dados (útil para desenvolvimento, em produção recomenda-se usar migrações)
 models.Base.metadata.create_all(bind=engine)
 ensure_photo_processing_columns()
 ensure_parent_school_column()
+ensure_parent_account_fields()
+ensure_face_cluster_school_column()
 
 app = FastAPI(
     title="Portal Web para Galeria Escolar",

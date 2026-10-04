@@ -47,7 +47,7 @@ def serialize_photo(photo: models.Photo) -> schemas.PhotoResponse:
         process_error=photo.process_error if hasattr(photo, "process_error") else None,
         detected_faces_count=detected_count,
         created_at=photo.created_at,
-        student_ids=[student.id for student in photo.students],
+        student_ids=[student.id for student in photo.students if student.school_id == photo.school_id],
         tags=photo.tags,
     )
 

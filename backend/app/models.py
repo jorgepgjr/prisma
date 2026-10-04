@@ -176,9 +176,10 @@ class Parent(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     phone = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String, nullable=True)
-    google_id = Column(String, nullable=True)
+    google_id = Column(String, unique=True, index=True, nullable=True)
     is_active = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     children = relationship("Child", secondary=parent_child_link, back_populates="parents")
 
 
@@ -231,6 +232,8 @@ class FaceCluster(Base):
     __tablename__ = 'face_clusters'
 
     id = Column(String, primary_key=True, index=True)  # UUID
+    # Nullable apenas para grupos antigos cuja escola não pode ser identificada.
+    school_id = Column(Integer, ForeignKey('schools.id'), nullable=True, index=True)
     student_id = Column(Integer, ForeignKey('students.id', ondelete="SET NULL"), nullable=True)
     name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

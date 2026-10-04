@@ -101,7 +101,11 @@ def google_login(req: GoogleLogin, session: Session = Depends(db.get_db)):
         raise HTTPException(status_code=403, detail="Email não pré-cadastrado na escola.")
     if not parent.is_active or not security.parent_school_is_active(parent, session):
         raise HTTPException(status_code=403, detail="Conta inativa. Solicite a ativação à coordenação.")
-    # Vincula o google_id e ativa se ainda não estava
+    if session.query(models.Parent).filter(
+        models.Parent.google_id == google_id, models.Parent.id != parent.id,
+    ).first():
+        raise HTTPException(status_code=409, detail="Esta conta Google já possui um vínculo familiar.")
+    # Mantém uma identificação Google única por conta familiar.
     parent.google_id = google_id
     parent.is_active = True
     session.commit()
