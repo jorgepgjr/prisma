@@ -1,4 +1,3 @@
-import os
 from io import BytesIO
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
@@ -30,9 +29,9 @@ def get_media(
     except JWTError:
         raise HTTPException(status_code=403, detail="Signature expired or invalid")
         
-    safe_path = os.path.basename(path)
-    file_path = UPLOAD_DIR / safe_path
-    if safe_path != path or not file_path.is_file():
+    root = UPLOAD_DIR.resolve()
+    file_path = (root / path).resolve()
+    if root not in file_path.parents or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
         
     if file_path.suffix.lower() in MOBILE_IMAGE_SUFFIXES:

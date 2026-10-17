@@ -14,7 +14,7 @@ def get_portfolio(
     """
     Retorna a grade de projetos/trabalhos da criança.
     """
-    projects = child.projects
+    projects = [project for project in child.projects if project.school_id == child.school_id]
     
     response_projects = []
     for project in projects:
@@ -24,7 +24,11 @@ def get_portfolio(
         except Exception:
             pedagogical_objectives = [project.pedagogical_objectives]
 
-        paths = [photo.file_path for photo in project.photos] or [project.image_path]
+        paths = [photo.file_path for photo in project.photos if photo.school_id == child.school_id]
+        if not paths:
+            if project.photos:
+                continue
+            paths = [project.image_path]
         proj_dict = {
             "id": project.id,
             "child_id": project.child_id,

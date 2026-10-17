@@ -11,6 +11,8 @@ def get_children(current_parent: models.Parent = Depends(security.get_current_pa
     """
     response_children = []
     for child in current_parent.children:
+        if not security.can_parent_access_child(current_parent, child):
+            continue
         child_dict = {
             "id": child.id,
             "name": child.name,

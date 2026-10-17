@@ -1,6 +1,7 @@
 export interface DecodedToken {
   sub: string; // email do usuário
-  role: string; // papel do usuário (ADMIN, DIRETOR, COORDENADOR, PROFESSOR, MARKETING)
+  role: "COORDENADOR" | "PROFESSOR" | "MARKETING";
+  school_id: number;
   exp: number;  // timestamp de expiração
 }
 

@@ -8,7 +8,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function LoginPage() {
   const { login } = useAuth();
-  const [email, setEmail] = useState("marilia@school.com");
+  const [email, setEmail] = useState("coordenacao@girassol.com");
   const [password, setPassword] = useState("mypassword");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -26,7 +26,7 @@ export default function LoginPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "Credenciais inválidas.");
-      login(data.access_token);
+      await login(data.access_token);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Não foi possível entrar.");
     } finally {
@@ -46,7 +46,7 @@ export default function LoginPage() {
           <div><label className="mb-1 block text-sm font-medium">Senha</label><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></div>
           <button disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 font-medium text-white hover:bg-blue-700 disabled:opacity-60">{loading && <LoaderCircle className="h-4 w-4 animate-spin" />} Entrar</button>
         </form>
-        <p className="mt-5 text-center text-xs text-slate-500">Conta local preparada: marilia@school.com</p>
+        <p className="mt-5 text-center text-xs text-slate-500">Conta local: coordenacao@girassol.com</p>
       </div>
     </main>
   );

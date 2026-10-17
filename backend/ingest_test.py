@@ -1,7 +1,8 @@
 import os
-import time
 import shutil
+import uuid
 from app import db, models
+from app.test_ingestion import extract_test_archives, find_test_images
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
@@ -9,18 +10,11 @@ TEST_IMAGES_DIR = os.path.join(BASE_DIR, "test_images")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(TEST_IMAGES_DIR, exist_ok=True)
 
-VALID_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".avif", ".bmp"}
-
-
 def ingest():
     print(f"Varrendo pasta de testes: {TEST_IMAGES_DIR}")
-    image_paths = []
-    for root, dirs, files in os.walk(TEST_IMAGES_DIR):
-        if "__MACOSX" in root:
-            continue
-        for f in files:
-            if not f.startswith(".") and os.path.splitext(f.lower())[1] in VALID_IMAGE_EXTENSIONS:
-                image_paths.append(os.path.join(root, f))
+    for warning in extract_test_archives(TEST_IMAGES_DIR):
+        print(f"Aviso: {warning}")
+    image_paths = find_test_images(TEST_IMAGES_DIR)
 
     if not image_paths:
         print("Nenhuma imagem encontrada em test_images/.")
@@ -29,26 +23,32 @@ def ingest():
 
     session = db.SessionLocal()
     try:
-        first_class = session.query(models.Class).first()
-        target_class_id = first_class.id if first_class else None
         first_user = session.query(models.User).first()
-        uploader_id = first_user.id if first_user else 1
+        if not first_user:
+            print("Nenhum usuário cadastrado para vincular às fotos.")
+            return
+        school_id = first_user.school_id
+        first_class = session.query(models.Class).filter(models.Class.school_id == school_id).first()
+        target_class_id = first_class.id if first_class else None
 
         imported = 0
         for source_path in image_paths:
             filename = os.path.basename(source_path)
 
             base_name, ext = os.path.splitext(filename)
-            dest_filename = f"test_{int(time.time()*1000)}_{filename}"
-            dest_path = os.path.join(UPLOADS_DIR, dest_filename)
+            dest_filename = f"test_{uuid.uuid4().hex}_{filename}"
+            relative_path = os.path.join(str(school_id), dest_filename)
+            dest_path = os.path.join(UPLOADS_DIR, relative_path)
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
             shutil.copy2(source_path, dest_path)
 
             new_photo = models.Photo(
-                file_path=dest_filename,
+                school_id=school_id,
+                file_path=relative_path.replace(os.sep, "/"),
                 title=f"Teste: {base_name}",
                 description="Importado via CLI ingest_test.py",
-                uploaded_by_user_id=uploader_id,
+                uploaded_by_user_id=first_user.id,
                 class_id=target_class_id,
                 status=models.PhotoStatusEnum.PENDING_REVIEW,
                 process_status=models.ProcessStatusEnum.PENDING,

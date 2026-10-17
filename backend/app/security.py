@@ -36,6 +36,26 @@ from . import models
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
+def parent_school_is_active(parent: models.Parent, session: Session) -> bool:
+    if parent.school_id is None:
+        return True  # Compatibilidade com contas familiares legadas.
+    school = session.get(models.School, parent.school_id)
+    return school is not None and school.is_active
+
+
+def can_parent_access_child(parent: models.Parent, child: models.Child) -> bool:
+    if child not in parent.children:
+        return False
+    if parent.school_id is not None and parent.school_id != child.school_id:
+        return False
+    if not child.school or not child.school.is_active:
+        return False
+    student = child.student_profile
+    return student is None or (
+        student.school_id == child.school_id and student.status == models.StudentStatusEnum.ATIVO
+    )
+
+
 def get_current_parent(token: str = Depends(oauth2_scheme), session: Session = Depends(get_db)) -> models.Parent:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -51,7 +71,7 @@ def get_current_parent(token: str = Depends(oauth2_scheme), session: Session = D
         raise credentials_exception
         
     parent = session.query(models.Parent).filter(models.Parent.id == parent_id).first()
-    if parent is None or not parent.is_active:
+    if parent is None or not parent.is_active or not parent_school_is_active(parent, session):
         raise credentials_exception
     return parent
 
@@ -63,7 +83,7 @@ def verifyChildAccess(child_id: str, current_parent: models.Parent = Depends(get
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
         
-    if child not in current_parent.children:
+    if not can_parent_access_child(current_parent, child):
         raise HTTPException(status_code=403, detail="Forbidden: You do not have access to this child's data")
         
     return child

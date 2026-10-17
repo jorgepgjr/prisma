@@ -46,7 +46,9 @@ def create_school_portfolio(
         raise HTTPException(status_code=422, detail="Selecione fotos e ao menos um aluno.")
 
     photo_ids = list(dict.fromkeys(payload.photo_ids))
-    photos = session.query(models.Photo).filter(models.Photo.id.in_(photo_ids)).all()
+    photos = session.query(models.Photo).filter(
+        models.Photo.school_id == current_user.school_id, models.Photo.id.in_(photo_ids)
+    ).all()
     if len(photos) != len(photo_ids) or any(photo.class_id is None for photo in photos):
         raise HTTPException(status_code=404, detail="Uma ou mais fotos não foram encontradas.")
     class_id = photos[0].class_id
@@ -56,7 +58,9 @@ def create_school_portfolio(
         raise HTTPException(status_code=403, detail="Você não tem acesso a estas fotos.")
 
     student_ids = list(dict.fromkeys(payload.student_ids))
-    students = session.query(models.Student).filter(models.Student.id.in_(student_ids)).all()
+    students = session.query(models.Student).filter(
+        models.Student.school_id == current_user.school_id, models.Student.id.in_(student_ids)
+    ).all()
     if len(students) != len(student_ids) or any(student.class_id != class_id for student in students):
         raise HTTPException(status_code=422, detail="Todos os alunos devem pertencer à turma das fotos.")
     missing = [student.name for student in students if not student.child_profile]
@@ -69,6 +73,7 @@ def create_school_portfolio(
     for student in students:
         project = models.Project(
             id=str(uuid.uuid4()),
+            school_id=current_user.school_id,
             child_id=student.child_profile.id,
             title=title,
             image_path=ordered_photos[0].file_path,

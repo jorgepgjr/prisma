@@ -36,4 +36,3 @@ trap 'echo -e "\nEncerrando serviços..."; kill $BACKEND_PID $WORKER_PID $FRONTE
 
 # Aguarda os processos rodarem indefinidamente
 wait
-
