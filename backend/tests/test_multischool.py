@@ -1,17 +1,26 @@
 import os
 import unittest
+import tempfile
+from io import BytesIO
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
 from datetime import datetime, timedelta
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
 from fastapi import HTTPException
+from fastapi import UploadFile
+from PIL import Image
+from starlette.datastructures import Headers
 from jose import jwt
 
 from app import models, schemas
 from app.admin_api import create_user, list_users, summary, update_user
 from app.classes import get_classes, update_class
 from app.db import SessionLocal, engine
-from app.photos import list_school_photos, marketing_photos
+from app.photos import list_school_photos, marketing_photos, move_photo, PhotoMove, update_photo_tags_batch, PhotoTagsBatch, upload_photo
+from app.tags import create_tag, get_tags
 from app.routers.media import get_media
 from app.security import ALGORITHM, SECRET_KEY
 from app.students import create_student, update_student, get_student_photos
@@ -89,6 +98,54 @@ class MultiSchoolTest(unittest.TestCase):
     def test_coordinator_lists_all_photos_from_own_school(self):
         photos = list_school_photos(None, self.coordinator, self.session)
         self.assertEqual({item.file_path for item in photos}, {"1/ok.jpg", "1/private.jpg"})
+
+    def test_tags_are_scoped_and_batch_add_preserves_existing(self):
+        first = create_tag(schemas.TagCreate(name=" Artes "), self.teacher, self.session)
+        same = create_tag(schemas.TagCreate(name="artes"), self.teacher, self.session)
+        other = create_tag(schemas.TagCreate(name="Artes"), self.other_coordinator, self.session)
+        self.assertEqual(first.id, same.id)
+        self.assertNotEqual(first.id, other.id)
+        photos = self.session.query(models.Photo).filter_by(school_id=self.teacher.school_id).all()
+        extra = create_tag(schemas.TagCreate(name="Música"), self.teacher, self.session)
+        update_photo_tags_batch(PhotoTagsBatch(photo_ids=[photos[0].id], tag_ids=[extra.id]), self.teacher, self.session)
+        update_photo_tags_batch(PhotoTagsBatch(photo_ids=[photos[0].id, photos[1].id], tag_ids=[first.id]), self.teacher, self.session)
+        self.assertEqual({tag.id for tag in photos[0].tags}, {first.id, extra.id})
+        self.assertEqual({tag.id for tag in photos[1].tags}, {first.id})
+        self.assertEqual({tag.id for tag in get_tags(self.teacher, self.session)}, {first.id, extra.id})
+        with self.assertRaises(HTTPException):
+            update_photo_tags_batch(PhotoTagsBatch(photo_ids=[photos[0].id], tag_ids=[other.id]), self.teacher, self.session)
+
+    def test_photo_move_rejects_foreign_class_and_published_photo(self):
+        photo = self.session.query(models.Photo).filter_by(school_id=self.teacher.school_id).first()
+        with self.assertRaises(HTTPException) as denied:
+            move_photo(photo.id, PhotoMove(class_id=self.second_class_id), self.teacher, self.session)
+        self.assertEqual(denied.exception.status_code, 404)
+        new_class = models.Class(school_id=self.teacher.school_id, name="Turma C", year=2026)
+        self.teacher.classes.append(new_class)
+        self.session.commit()
+        result = move_photo(photo.id, PhotoMove(class_id=new_class.id), self.teacher, self.session)
+        self.assertEqual(result.class_id, new_class.id)
+
+    def test_upload_retry_reuses_confirmed_photo(self):
+        from app import photos as photo_module
+        with tempfile.TemporaryDirectory() as directory, patch.object(photo_module, "UPLOAD_DIR", Path(directory)):
+            def image():
+                return UploadFile(file=BytesIO(b"photo"), filename="sample.jpg", headers=Headers({"content-type": "image/jpeg"}))
+            first = upload_photo(image(), "Foto", None, self.first_class_id, "stable-id", self.teacher, self.session)
+            retry = upload_photo(image(), "Foto", None, self.first_class_id, "stable-id", self.teacher, self.session)
+            self.assertEqual(first.id, retry.id)
+            self.assertEqual(self.session.query(models.Photo).filter_by(client_upload_id="stable-id").count(), 1)
+
+    def test_signed_thumbnail_is_reduced(self):
+        from app.routers import media
+        with tempfile.TemporaryDirectory() as directory, patch.object(media, "UPLOAD_DIR", Path(directory)):
+            image_path = Path(directory) / "1" / "test.png"
+            image_path.parent.mkdir()
+            Image.new("RGB", (1000, 800), "blue").save(image_path)
+            query = parse_qs(urlparse(security.generatePresignedUrl("1/test.png")).query)
+            result = media.get_media("1/test.png", query["signature"][0], True)
+            self.assertEqual(result.media_type, "image/jpeg")
+            self.assertLessEqual(Image.open(BytesIO(result.body)).width, 480)
 
     def test_admin_lists_managed_roles_and_summary_is_scoped(self):
         users = list_users(True, self.coordinator, self.session)

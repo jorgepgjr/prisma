@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
@@ -11,6 +12,14 @@ from . import db, models, schemas, security
 from .dependencies import get_current_user, require_roles
 
 router = APIRouter()
+
+class PhotoMove(BaseModel):
+    class_id: int
+
+class PhotoTagsBatch(BaseModel):
+    photo_ids: List[int] = Field(min_length=1, max_length=200)
+    tag_ids: List[int] = Field(min_length=1, max_length=20)
+    remove: bool = False
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "image/avif", "application/octet-stream"}
 ALLOWED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".avif"}
@@ -57,11 +66,22 @@ def serialize_photo(photo: models.Photo) -> schemas.PhotoResponse:
 def upload_photo(
     file: UploadFile = File(...), title: Optional[str] = Form(None),
     description: Optional[str] = Form(None), class_id: int = Form(...),
+    client_upload_id: Optional[str] = Form(None),
     current_user: models.User = Depends(get_current_user), session: Session = Depends(db.get_db),
 ):
     if current_user.role not in {models.RoleEnum.PROFESSOR, models.RoleEnum.COORDENADOR}:
         raise HTTPException(status_code=403, detail="Seu perfil não pode enviar fotos.")
     require_class_access(current_user, class_id, session)
+    if client_upload_id:
+        if len(client_upload_id) > 64:
+            raise HTTPException(status_code=422, detail="Identificador de envio inválido.")
+        existing = session.query(models.Photo).filter(
+            models.Photo.school_id == current_user.school_id,
+            models.Photo.client_upload_id == client_upload_id,
+            models.Photo.uploaded_by_user_id == current_user.id,
+        ).first()
+        if existing:
+            return serialize_photo(existing)
     suffix = Path(file.filename or "foto.jpg").suffix.lower() or ".jpg"
     if file.content_type not in ALLOWED_IMAGE_TYPES or suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(status_code=415, detail="Envie uma imagem JPEG, PNG, WebP, AVIF ou HEIC.")
@@ -78,6 +98,7 @@ def upload_photo(
         school_id=current_user.school_id, file_path=relative_path.as_posix(),
         title=title or "Foto da rotina escolar", description=description,
         uploaded_by_user_id=current_user.id, class_id=class_id,
+        client_upload_id=client_upload_id,
     )
     try:
         session.add(new_photo)
@@ -86,6 +107,14 @@ def upload_photo(
     except Exception:
         session.rollback()
         destination.unlink(missing_ok=True)
+        if client_upload_id:
+            existing = session.query(models.Photo).filter(
+                models.Photo.school_id == current_user.school_id,
+                models.Photo.client_upload_id == client_upload_id,
+                models.Photo.uploaded_by_user_id == current_user.id,
+            ).first()
+            if existing:
+                return serialize_photo(existing)
         raise
     return serialize_photo(new_photo)
 
@@ -127,7 +156,9 @@ def get_photos_by_class(
         query = query.filter(models.Photo.created_at <= date_to)
     if tag_ids:
         for tag_id in set(tag_ids):
-            query = query.filter(models.Photo.tags.any(models.Tag.id == tag_id))
+            query = query.filter(models.Photo.tags.any(
+                (models.Tag.id == tag_id) & (models.Tag.school_id == current_user.school_id)
+            ))
     return [serialize_photo(photo) for photo in query.order_by(models.Photo.created_at.desc()).all()]
 
 
@@ -161,6 +192,8 @@ def update_photo_status(
 
 
 def get_owned_photo(photo_id: int, user: models.User, session: Session) -> models.Photo:
+    if user.role not in {models.RoleEnum.PROFESSOR, models.RoleEnum.COORDENADOR}:
+        raise HTTPException(status_code=403, detail="Perfil sem acesso às fotos.")
     photo = session.query(models.Photo).filter(
         models.Photo.id == photo_id, models.Photo.school_id == user.school_id
     ).first()
@@ -175,7 +208,7 @@ def add_tag_to_photo(
     session: Session = Depends(db.get_db),
 ):
     photo = get_owned_photo(photo_id, current_user, session)
-    tag = session.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    tag = session.query(models.Tag).filter(models.Tag.id == tag_id, models.Tag.school_id == current_user.school_id).first()
     if not tag:
         raise HTTPException(status_code=404, detail="Tag não encontrada.")
     if tag not in photo.tags:
@@ -191,7 +224,7 @@ def remove_tag_from_photo(
     session: Session = Depends(db.get_db),
 ):
     photo = get_owned_photo(photo_id, current_user, session)
-    tag = session.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    tag = session.query(models.Tag).filter(models.Tag.id == tag_id, models.Tag.school_id == current_user.school_id).first()
     if not tag:
         raise HTTPException(status_code=404, detail="Tag não encontrada.")
     if tag in photo.tags:
@@ -199,3 +232,42 @@ def remove_tag_from_photo(
         session.commit()
         session.refresh(photo)
     return serialize_photo(photo)
+
+
+@router.post("/tags/batch", response_model=List[schemas.PhotoResponse])
+def update_photo_tags_batch(payload: PhotoTagsBatch, current_user: models.User = Depends(get_current_user), session: Session = Depends(db.get_db)):
+    photos = [get_owned_photo(photo_id, current_user, session) for photo_id in set(payload.photo_ids)]
+    tags = session.query(models.Tag).filter(models.Tag.id.in_(set(payload.tag_ids)), models.Tag.school_id == current_user.school_id).all()
+    if len(tags) != len(set(payload.tag_ids)):
+        raise HTTPException(status_code=404, detail="Tag não encontrada.")
+    for photo in photos:
+        for tag in tags:
+            if payload.remove and tag in photo.tags:
+                photo.tags.remove(tag)
+            elif not payload.remove and tag not in photo.tags:
+                photo.tags.append(tag)
+    session.commit()
+    return [serialize_photo(photo) for photo in photos]
+
+
+@router.put("/{photo_id}/class", response_model=schemas.PhotoResponse)
+def move_photo(photo_id: int, payload: PhotoMove, current_user: models.User = Depends(get_current_user), session: Session = Depends(db.get_db)):
+    photo = get_owned_photo(photo_id, current_user, session)
+    require_class_access(current_user, payload.class_id, session)
+    if photo.posts or photo.projects:
+        raise HTTPException(status_code=409, detail="Foto usada em publicação ou portfólio não pode ser movida.")
+    photo.class_id = payload.class_id
+    session.commit()
+    session.refresh(photo)
+    return serialize_photo(photo)
+
+
+@router.delete("/{photo_id}", status_code=204)
+def delete_photo(photo_id: int, current_user: models.User = Depends(get_current_user), session: Session = Depends(db.get_db)):
+    photo = get_owned_photo(photo_id, current_user, session)
+    if photo.posts or photo.projects:
+        raise HTTPException(status_code=409, detail="Foto usada em publicação ou portfólio não pode ser excluída.")
+    path = UPLOAD_DIR / photo.file_path
+    session.delete(photo)
+    session.commit()
+    path.unlink(missing_ok=True)

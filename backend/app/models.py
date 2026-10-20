@@ -87,8 +87,10 @@ class School(Base):
 
 class Tag(Base):
     __tablename__ = "tags"
+    __table_args__ = (UniqueConstraint("school_id", "name", name="uq_tag_school_name"),)
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True, nullable=False)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
+    name = Column(String(60), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     photos = relationship("Photo", secondary=photo_tag_link, back_populates="tags")
 
@@ -145,6 +147,7 @@ class Student(Base):
 
 class Photo(Base):
     __tablename__ = "photos"
+    __table_args__ = (UniqueConstraint("school_id", "client_upload_id", name="uq_photo_school_client_upload"),)
     id = Column(Integer, primary_key=True, index=True)
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
     file_path = Column(String, unique=True, index=True, nullable=False)
@@ -152,6 +155,7 @@ class Photo(Base):
     description = Column(String, nullable=True)
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     class_id = Column(Integer, ForeignKey("classes.id"), nullable=True, index=True)
+    client_upload_id = Column(String(64), nullable=True)
     status = Column(SQLEnum(PhotoStatusEnum), default=PhotoStatusEnum.PENDING_REVIEW, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     school = relationship("School", back_populates="photos")

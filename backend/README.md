@@ -62,4 +62,16 @@ O servidor iniciará na porta `8000`:
 - **API Base:** [http://localhost:8000/](http://localhost:8000/)
 - **Documentação Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
 - **Documentação ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
-- **Painel Administrativo (SQLAdmin):** [http://localhost:8000/admin](http://localhost:8000/admin)
+- **Portal da Coordenação:** [http://localhost:3000/admin](http://localhost:3000/admin). O SQLAdmin legado está desativado.
+
+## Aplicativo TinhaKids unificado
+
+O aplicativo atual é desenvolvido na pasta `tinhaphone` da raiz que reúne os três projetos, com áreas de professor e família. O projeto antigo TinhaKids permanece como referência.
+
+- `POST /api/mobile/auth/login`: JSON `{ "email": "...", "password": "..." }`; retorna `access_token`, `token_type` e `account` com `id`, `profile` (`PROFESSOR` ou `FAMILIAR`), `name`, `email`, `school_id` e `school_name`.
+- `GET /api/mobile/auth/me`: exige Bearer token e retorna o contexto novamente validado no banco. Conta/escola inativa ou papel profissional não habilitado são recusados.
+- Tokens mantêm o `sub` esperado pelos endpoints antigos de cada área. As rotas profissionais e familiares anteriores continuam disponíveis.
+- Um e-mail normalizado só pode ser usado por uma conta, mesmo em tabelas/escolas diferentes. Os CRUDs retornam 409 em conflito. Duplicidades legadas interrompem o login móvel com orientação para correção, sem apagar registros. A correção deve ser feita pela coordenação com outro e-mail, sem juntar contas.
+- Não é necessário recriar o banco ou executar seed para esta atualização.
+
+Os testes usam SQLite em memória: `pipenv run python -m unittest discover -s tests -v`. O roteiro de Android/iPhone está em `../GUIA_DE_TESTES_E_FLUXOS.md`.

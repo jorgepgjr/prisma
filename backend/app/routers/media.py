@@ -15,7 +15,8 @@ MOBILE_IMAGE_SUFFIXES = {".avif", ".heic", ".heif"}
 @router.get("/")
 def get_media(
     path: str = Query(...),
-    signature: str = Query(...)
+    signature: str = Query(...),
+    thumbnail: bool = Query(False),
 ):
     """
     Serve a imagem local se a assinatura JWT for válida e não estiver expirada.
@@ -34,7 +35,7 @@ def get_media(
     if root not in file_path.parents or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
         
-    if file_path.suffix.lower() in MOBILE_IMAGE_SUFFIXES:
+    if thumbnail or file_path.suffix.lower() in MOBILE_IMAGE_SUFFIXES:
         try:
             with Image.open(file_path) as source:
                 image = ImageOps.exif_transpose(source)
@@ -44,9 +45,9 @@ def get_media(
                     image = background
                 elif image.mode != "RGB":
                     image = image.convert("RGB")
-                image.thumbnail((2560, 2560))
+                image.thumbnail((480, 480) if thumbnail else (2560, 2560))
                 output = BytesIO()
-                image.save(output, format="JPEG", quality=90, optimize=True)
+                image.save(output, format="JPEG", quality=78 if thumbnail else 90, optimize=True)
             return Response(
                 content=output.getvalue(),
                 media_type="image/jpeg",

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from . import models, schemas, security
 from .db import get_db
 from .dependencies import require_roles
+from .account_email import ensure_available_email
 
 router = APIRouter()
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
@@ -88,9 +89,7 @@ def create_user(
     session: Session = Depends(get_db),
 ):
     validate_role(payload.role)
-    email = str(payload.email).strip().lower()
-    if session.query(models.User).filter(models.User.email == email).first():
-        raise HTTPException(status_code=409, detail="Este e-mail já está cadastrado.")
+    email = ensure_available_email(session, payload.email)
     item = models.User(
         school_id=current_user.school_id, name=payload.name.strip(), email=email,
         hashed_password=security.get_password_hash(payload.password), role=payload.role,
@@ -120,10 +119,7 @@ def update_user(
     if "role" in values:
         validate_role(values["role"])
     if "email" in values:
-        values["email"] = str(values["email"]).strip().lower()
-        duplicate = session.query(models.User).filter(models.User.email == values["email"], models.User.id != item.id).first()
-        if duplicate:
-            raise HTTPException(status_code=409, detail="Este e-mail já está cadastrado.")
+        values["email"] = ensure_available_email(session, values["email"], user_id=item.id)
     if "name" in values:
         values["name"] = values["name"].strip()
     for key, value in values.items():
