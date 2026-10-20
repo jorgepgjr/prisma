@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from . import db, models, schemas, security
 from .dependencies import require_roles
 from .photos import can_access_class
+from .account_email import ensure_available_email, normalize_email, email_accounts
 
 router = APIRouter()
 
@@ -97,9 +98,7 @@ def create_parent(
     name = payload.name.strip()
     if len(name) < 2:
         raise HTTPException(status_code=422, detail="Informe o nome do familiar.")
-    email = str(payload.email).strip().lower()
-    if session.query(models.Parent).filter(models.Parent.email == email).first():
-        raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
+    email = ensure_available_email(session, payload.email)
     parent = models.Parent(id=str(uuid.uuid4()), school_id=current_user.school_id,
                            name=name, email=email, phone=(payload.phone or "").strip() or None,
                            hashed_password=security.get_password_hash(payload.password), is_active=True)
@@ -117,10 +116,8 @@ def update_parent(
 ):
     parent = own_parent(parent_id, current_user, session)
     students = selected_students(payload.student_ids, current_user.school_id, session) if payload.student_ids is not None else None
-    if payload.email is not None and session.query(models.Parent).filter(
-        models.Parent.email == str(payload.email).strip().lower(), models.Parent.id != parent.id,
-    ).first():
-        raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
+    if payload.email is not None:
+        ensure_available_email(session, payload.email, parent_id=parent.id)
     if payload.phone and session.query(models.Parent).filter(
         models.Parent.phone == payload.phone.strip(), models.Parent.id != parent.id,
     ).first():
@@ -196,8 +193,10 @@ def create_family_profile(
     if student.child_profile:
         raise HTTPException(status_code=409, detail="Este aluno já possui um perfil familiar.")
 
-    email = str(payload.parent_email).strip().lower()
-    parent = session.query(models.Parent).filter(models.Parent.email == email).first()
+    email = normalize_email(payload.parent_email)
+    _, existing_parents = email_accounts(session, email)
+    parent = existing_parents[0] if existing_parents else None
+    ensure_available_email(session, email, parent_id=parent.id if parent else None)
     if parent and not session.query(models.Parent).filter(models.Parent.id == parent.id, parent_school_filter(current_user.school_id)).first():
         raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
     if not parent:

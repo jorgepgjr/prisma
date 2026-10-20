@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import models
 from .db import engine
 from .auth import router as auth_router
+from .mobile_auth import router as mobile_auth_router
 from .photos import router as photos_router
 from .classes import router as classes_router
 from .students import router as students_router
@@ -18,11 +19,13 @@ from .school_portfolio import router as school_portfolio_router
 from .admin_api import router as admin_router
 from .routers.faces import router as faces_router
 from .routers.system import router as system_router
-from .schema_migrations import (ensure_photo_processing_columns, ensure_parent_school_column,
+from .schema_migrations import (ensure_tag_school_columns, ensure_photo_upload_id_column, ensure_photo_processing_columns, ensure_parent_school_column,
                                 ensure_parent_account_fields, ensure_face_cluster_school_column)
 
 # Cria as tabelas do banco de dados (útil para desenvolvimento, em produção recomenda-se usar migrações)
+ensure_tag_school_columns()
 models.Base.metadata.create_all(bind=engine)
+ensure_photo_upload_id_column()
 ensure_photo_processing_columns()
 ensure_parent_school_column()
 ensure_parent_account_fields()
@@ -41,11 +44,11 @@ def startup_event():
     try:
         # Create default tags if they don't exist
         default_tags = ["restricao-lgpd", "marketing"]
-        for tag_name in default_tags:
-            tag = db.query(models.Tag).filter(models.Tag.name == tag_name).first()
-            if not tag:
-                new_tag = models.Tag(name=tag_name)
-                db.add(new_tag)
+        for school in db.query(models.School).all():
+            for tag_name in default_tags:
+                tag = db.query(models.Tag).filter(models.Tag.school_id == school.id, models.Tag.name == tag_name).first()
+                if not tag:
+                    db.add(models.Tag(school_id=school.id, name=tag_name))
         db.commit()
     finally:
         db.close()
@@ -68,6 +71,7 @@ app.add_middleware(
 
 # Inclui o roteador de autenticação
 app.include_router(auth_router, prefix="/api/auth", tags=["Autenticação"])
+app.include_router(mobile_auth_router, prefix="/api/mobile/auth", tags=["Aplicativo - Autenticação"])
 app.include_router(photos_router, prefix="/api/photos", tags=["Fotos"])
 app.include_router(classes_router, prefix="/api/classes", tags=["Turmas"])
 app.include_router(students_router, prefix="/api/students", tags=["Alunos"])

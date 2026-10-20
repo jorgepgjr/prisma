@@ -5,6 +5,51 @@ from sqlalchemy import inspect, text
 from .db import engine
 
 
+def ensure_tag_school_columns() -> None:
+    """Preserve legacy tags while partitioning their photo links by school."""
+    inspector = inspect(engine)
+    if not inspector.has_table("tags"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("tags")}
+    if "school_id" in columns:
+        return
+    if engine.dialect.name != "postgresql":
+        raise RuntimeError("A migração de tags existentes requer PostgreSQL.")
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE tags ADD COLUMN school_id INTEGER REFERENCES schools(id)"))
+        connection.execute(text("DROP INDEX IF EXISTS ix_tags_name"))
+        connection.execute(text("ALTER TABLE tags DROP CONSTRAINT IF EXISTS tags_name_key"))
+        legacy = connection.execute(text("SELECT id, name FROM tags")).mappings().all()
+        schools = connection.execute(text("SELECT id FROM schools ORDER BY id")).scalars().all()
+        for tag in legacy:
+            if not schools:
+                connection.execute(text("DELETE FROM tags WHERE id = :id"), {"id": tag["id"]})
+                continue
+            connection.execute(text("UPDATE tags SET school_id = :school WHERE id = :id"),
+                               {"school": schools[0], "id": tag["id"]})
+            for school in schools[1:]:
+                new_id = connection.execute(text("INSERT INTO tags (name, school_id, created_at) VALUES (:name, :school, CURRENT_TIMESTAMP) RETURNING id"),
+                                            {"name": tag["name"], "school": school}).scalar_one()
+                connection.execute(text("""
+                    UPDATE photo_tag_link SET tag_id = :new_id WHERE tag_id = :old_id
+                    AND photo_id IN (SELECT id FROM photos WHERE school_id = :school)
+                """), {"new_id": new_id, "old_id": tag["id"], "school": school})
+        connection.execute(text("ALTER TABLE tags ALTER COLUMN school_id SET NOT NULL"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_tag_school_name ON tags (school_id, name)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_tags_school_id ON tags (school_id)"))
+
+
+def ensure_photo_upload_id_column() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("photos"):
+        return
+    if "client_upload_id" in {column["name"] for column in inspector.get_columns("photos")}:
+        return
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE photos ADD COLUMN client_upload_id VARCHAR(64)"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_photo_school_client_upload ON photos (school_id, client_upload_id)"))
+
+
 def ensure_parent_account_fields() -> None:
     """Restaura os campos originais sem remover ou substituir contas."""
     inspector = inspect(engine)

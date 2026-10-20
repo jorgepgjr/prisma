@@ -1,19 +1,21 @@
 # Guia de testes e fluxos dos aplicativos
 
+> Unificação validada em 17/10/2026: 45 testes de backend, 36 testes do app unificado e um teste integrado Android passaram. Os 11 testes do projeto familiar antigo também passaram. APK de desenvolvimento compilado. iPhone e compartilhamento pelo menu externo do sistema continuam com validação manual pendente; no teste integrado, a entrega do compartilhamento é simulada no limite do plugin.
+
 Este documento descreve como iniciar e testar o ecossistema formado por:
 
 - **Prisma:** portal web e API da escola.
-- **TinhaPhone:** aplicativo usado pelo professor para fotografar e enviar imagens.
-- **TinhaKids:** aplicativo usado pelas famílias para visualizar publicações e portfólios.
+- **TinhaKids unificado:** um aplicativo para professores e familiares, desenvolvido na pasta `tinhaphone`.
+- **tinhakids (repositório antigo):** referência histórica; não é o app atual.
 
 ## 1. Visão geral do fluxo
 
 ```text
 Coordenação cadastra profissionais, turmas e crianças no Prisma
                               ↓
-Professor configura o TinhaPhone com sua conta e uma turma
+Professor entra no TinhaKids e escolhe uma de suas turmas
                               ↓
-Professor tira uma foto e o TinhaPhone envia para o Prisma
+Professor tira uma foto e o TinhaKids envia para o Prisma
                               ↓
 Worker do Prisma processa a foto e organiza faces em grupos
                               ↓
@@ -309,100 +311,68 @@ Esse teste é obrigatório sempre que uma nova API de cadastro ou consulta for c
 - [ ] Marketing vê somente fotos aprovadas da própria escola.
 - [ ] Professor vê somente turmas da própria escola às quais foi atribuído.
 
-## 9. Configurar e testar o TinhaPhone
+## 9. Iniciar o TinhaKids unificado e testar a área do professor
 
-O Prisma precisa estar rodando antes de abrir o TinhaPhone.
+O código do aplicativo único está na pasta **tinhaphone**. Não é necessário instalar um segundo app para a família. Não execute o seed para atualizar: os cadastros e vínculos do Prisma permanecem existentes.
 
-### 9.1 Endereço da API
-
-Use o endereço correspondente ao dispositivo:
-
-| Ambiente | Endereço |
-|---|---|
-| Emulador Android | `http://10.0.2.2:8000` |
-| iOS Simulator ou aplicativo desktop | `http://127.0.0.1:8000` |
-| Celular físico | `http://IP-DO-COMPUTADOR:8000` |
-
-Para celular físico, computador e celular devem estar na mesma rede. Descubra o IP do computador com:
-
-```powershell
-ipconfig
-```
-
-### 9.2 Iniciar
-
-Confira os dispositivos disponíveis:
-
-```powershell
-flutter devices
-```
-
-Depois execute:
+### 9.1 Executar no Android
 
 ```powershell
 cd C:\Users\Guilherme\Desktop\JavaScript_Projects\jorge\tinhaphone
 flutter pub get
-flutter run
+flutter devices
+flutter run -d ID-DO-DISPOSITIVO
 ```
 
-### 9.3 Configuração no aplicativo
+No emulador Android, a API padrão é `http://10.0.2.2:8000`. No celular físico, utilize o IP do computador:
 
-Na tela de configuração do TinhaPhone, informe:
+```powershell
+flutter run -d ID-DO-DISPOSITIVO --dart-define=API_URL=http://IP-DO-COMPUTADOR:8000
+```
 
-- Endereço da API conforme a tabela anterior.
-- E-mail do Professor, por exemplo `professora@girassol.com`.
-- Senha `mypassword`.
-- ID de uma turma atribuída ao Professor.
+A tela de login possui **Servidor de testes** para alterar o endereço sem recompilar. A senha não é salva: somente a sessão fica no armazenamento seguro do dispositivo.
 
-Para descobrir o ID da turma:
+**Preservação:** não desinstale o aplicativo nem use `flutter install` para atualizar uma instalação com dados. Esse comando pode remover a versão anterior. Para instalar um APK já compilado mantendo os dados, utilize `adb install -r caminho-do-apk`; se houver erro de assinatura, interrompa e faça backup, sem desinstalar. O identificador normal continua `com.example.tinhaphone`.
 
-1. Entre como Professor ou Coordenador no Prisma.
-2. Abra a turma desejada.
-3. Observe o número no final da URL. Exemplo: `/class/1` significa ID `1`.
+### 9.2 Entrada e escolha de turma
 
-Não fixe o ID no teste: ele pode mudar quando o banco for recriado.
+- [ ] Na tela **TinhaKids**, entre com uma conta de Professor existente no Prisma.
+- [ ] Confirme a área **Câmera escolar**, sem telas de familiares.
+- [ ] Selecione a turma pelo nome. Somente turmas atribuídas ao professor devem aparecer.
+- [ ] Com um professor sem turmas, confira a mensagem de orientação e o bloqueio da câmera/importação.
+- [ ] Tente credenciais inválidas, conta inativa, Coordenação e Marketing; nenhum deve entrar.
+- [ ] Confira que não é necessário informar usuário, senha ou código numérico nas configurações.
+- [ ] Cada e-mail só pode pertencer a uma conta. Quem for professor e familiar precisa de e-mails diferentes.
 
-### 9.4 Envio de foto
+### 9.3 Captura, fila e troca de conta
 
-- [ ] Use **Testar conexão** e confirme que o nome das turmas é apresentado.
-- [ ] Salve a configuração.
-- [ ] Tire uma foto.
-- [ ] Confirme que o aplicativo informa **Foto enviada ao Prisma com sucesso**.
-- [ ] Abra a turma no Prisma e confirme que a foto apareceu.
-- [ ] Abra a biblioteca geral da Coordenação e confirme que a mesma foto aparece.
-- [ ] Confirme que a foto nova começa como **Aguardando revisão**.
-- [ ] Desligue temporariamente o backend, tente enviar e confirme que o erro fica registrado.
-- [ ] Ligue o backend novamente e use a opção de tentar o upload outra vez.
+- [ ] Tire uma foto e confira a confirmação de envio e sua presença na turma correta do Prisma.
+- [ ] Sem rede, capture outra foto. Ela deve permanecer salva para tentar novamente.
+- [ ] Troque a turma selecionada: fotos já pendentes mantêm a turma em que foram criadas.
+- [ ] Durante um envio, o botão **Sair** e a troca de turma ficam indisponíveis.
+- [ ] Saia e entre com outro professor: fotos, turmas, configurações e registros de erro da conta anterior não devem aparecer.
+- [ ] Volte à primeira conta e confira sua fila anterior.
+- [ ] Reabra o app: a sessão deve ser validada pelo servidor; sessão expirada exige login sem apagar a fila.
+- [ ] Sem conexão ao reabrir, o app pede nova autenticação; os arquivos pendentes permanecem preservados.
+- [ ] A fila começa nova. Fotos antigas de `photo_vault.db` não são importadas nem apagadas pelo aplicativo unificado.
 
-### 9.5 Limpeza automática do aparelho
+### 9.4 Limpeza e compartilhamento
 
-Use fotos de teste. A opção vem **desligada** e só remove cópias privadas do TinhaPhone cujo envio foi confirmado pelo Prisma. Os originais do rolo da câmera não são apagados.
+- [ ] Nas configurações, ative **Apagar automaticamente fotos sincronizadas** e salve.
+- [ ] Confira a remoção apenas das cópias desta conta confirmadas pelo Prisma.
+- [ ] Pendências e originais da galeria devem permanecer intactos.
+- [ ] Com professor autenticado e turma selecionada, use **Compartilhar → TinhaKids** na galeria.
+- [ ] Teste uma e várias imagens, com o app aberto e fechado, e também sem rede.
+- [ ] Sem turma selecionada, confira o aviso para escolher uma turma e compartilhar novamente, sem envio nem remoção do original.
+- [ ] Com uma sessão familiar, compartilhe uma imagem: não deve haver importação ou upload.
+- [ ] Ao retornar a uma conta de professor depois de sair da família, a imagem descartada não deve ser enviada.
+- [ ] O último compartilhamento não pode ser importado repetidamente ao reabrir o app.
 
-- [ ] Com a opção desligada, envie uma foto e confirme que continua na galeria do TinhaPhone.
-- [ ] Abra **Configurações**, marque **Apagar automaticamente fotos sincronizadas** e toque em **Salvar**.
-- [ ] Volte à tela inicial e confirme que as cópias já enviadas desapareceram do TinhaPhone, mas continuam no Prisma.
-- [ ] Tire outra foto: depois do envio confirmado, a cópia local deve desaparecer sem deixar miniatura quebrada na câmera.
-- [ ] Com a API indisponível ou o celular sem rede, tire uma foto. Ela deve permanecer no aparelho como pendente/erro, mesmo com a limpeza ativa.
-- [ ] Restabeleça a conexão e toque em **Enviar**. Confirme a presença no Prisma antes de considerar o teste aprovado.
-- [ ] Feche e reabra o app; confira que a escolha da limpeza continua salva.
-- [ ] Desmarque a opção e salve. Novos envios devem voltar a preservar a cópia local.
+### 9.5 iPhone — checklist pendente de macOS/Xcode
 
-Fotos antigas sincronizadas apenas com o Google Drive, sem confirmação do Prisma, não são removidas por esta limpeza.
+O nome, os identificadores existentes, o grupo da extensão de compartilhamento e o armazenamento seguro foram preparados para iOS. Compilação, assinatura e comportamento em iPhone **não foram validados neste Windows**.
 
-### 9.6 Compartilhar fotos da galeria com o TinhaPhone
-
-É necessário recompilar e reinstalar/atualizar o aplicativo; um hot reload não atualiza o menu de compartilhamento do sistema. Estes testes são para Android/iPhone, não para navegador ou Windows. No iPhone, a compilação e validação exigem macOS/Xcode.
-
-- [ ] Configure o acesso e confira o código da turma que receberá as imagens.
-- [ ] Na galeria do celular, selecione uma imagem e use **Compartilhar → Tinhaphone**.
-- [ ] Confirme o recebimento no aplicativo e o envio para a **turma configurada** no Prisma.
-- [ ] Repita com várias imagens selecionadas: todas devem aparecer no Prisma.
-- [ ] Repita com o TinhaPhone completamente fechado e depois com ele já aberto.
-- [ ] Compartilhe sem rede: as cópias devem ficar salvas no app para usar **Enviar** depois.
-- [ ] Em uma instalação sem configuração, compartilhe uma imagem, volte da configuração sem salvar e confira que ela fica pendente. Configure o Prisma depois e toque em **Enviar**.
-- [ ] Com a limpeza automática ativa, confirme que a cópia do TinhaPhone desaparece após o envio, mas a foto **original continua na galeria do celular**.
-- [ ] Ao reabrir o app normalmente, confirme que ele não importa novamente o último compartilhamento.
-- [ ] Verifique que o TinhaPhone aparece para imagens, não para compartilhar textos ou vídeos.
+Em um Mac, executar `flutter pub get` e `flutter build ios --no-codesign`, configurar assinatura do Runner e da ShareExtension no Xcode e repetir os testes de login, restauração do token, câmera, envio, compartilhamento aberto/fechado e limpeza. Usar um servidor acessível ao iPhone. Validar acesso negado às permissões sem travamento, manutenção dos originais e ausência de envio na área familiar.
 
 ## 10. Criar conteúdo para o TinhaKids
 
@@ -434,32 +404,18 @@ Antes deste teste:
 - [ ] O portfólio é criado para a criança selecionada.
 - [ ] Várias fotos são preservadas como uma galeria do mesmo projeto.
 
-## 11. Iniciar e testar o TinhaKids
+## 11. Testar a área familiar no mesmo TinhaKids
 
-Para testar no navegador:
+Use a mesma instalação da seção 9. Saia da conta de professor e entre com o e-mail e senha de um familiar cadastrado no Prisma. Não é necessário instalar ou executar o projeto antigo da pasta `tinhakids`.
 
-```powershell
-cd C:\Users\Guilherme\Desktop\JavaScript_Projects\jorge\tinhakids
-flutter pub get
-flutter run -d chrome
-```
+Contas de desenvolvimento do seed (somente se já existirem na base):
+- `pai.teste@girassol.com` / `mypassword`: somente FILHO TESTE.
+- `mae.sofia@girassol.com` / `mypassword`: somente Sofia.
 
-Para Android, use um dispositivo listado em `flutter devices`:
-
-```powershell
-flutter run -d ID-DO-DISPOSITIVO
-```
-
-Para conferir o exemplo real criado pelo seed no TinhaKids, use:
-
-```text
-E-mail: pai.teste@girassol.com
-Senha: mypassword
-```
-
-Essa conta mostra somente **FILHO TESTE**. Saia e entre com `mae.sofia@girassol.com` / `mypassword`: somente **Sofia** deve aparecer, com outra publicação e outro portfólio.
-
-Todas as contas dependem da API do Prisma em execução. Para celular físico, use `flutter run -d ID-DO-DISPOSITIVO --dart-define=API_URL=http://IP-DO-COMPUTADOR:8000`. Uma conta nova usa o e-mail e a senha definidos pela Coordenação na aba **Familiares**. O app nunca substitui um erro de login por dados locais fictícios.
+- [ ] O familiar entra diretamente na **Área da família**, sem câmera, seleção de turma ou fila.
+- [ ] Familiar sem alunos vinculados recebe orientação para consultar a escola, sem falhar no login.
+- [ ] A alteração/remoção de vínculos no Prisma é refletida ao atualizar.
+- [ ] Sair limpa as telas. Voltar ou uma resposta de rede atrasada não pode reabrir os dados da conta anterior.
 
 ### Feed
 
@@ -484,18 +440,18 @@ Todas as contas dependem da API do Prisma em execução. Para celular físico, u
 
 ## 12. Roteiro completo de teste integrado
 
-Use esta sequência para validar os três aplicativos de ponta a ponta:
+Use esta sequência para validar o portal e as duas áreas do aplicativo único:
 
 1. [ ] Inicie Docker, backend e frontend do Prisma.
 2. [ ] Entre como Coordenação da Escola Girassol.
 3. [ ] Confirme profissionais, turma e crianças do seed.
 4. [ ] Abra **Familiares** e confira o vínculo de `pai.teste@girassol.com` com FILHO TESTE. Para testar cadastro, crie outro familiar por essa aba e selecione o aluno.
-5. [ ] Configure o TinhaPhone com o Professor e o ID dessa turma.
-6. [ ] Tire e envie uma nova foto pelo TinhaPhone.
+5. [ ] Entre no TinhaKids como Professor e selecione essa turma pelo nome.
+6. [ ] Tire e envie uma nova foto pelo TinhaKids.
 7. [ ] Confirme a foto na biblioteca geral da Coordenação.
 8. [ ] Abra a turma e crie uma publicação para a criança vinculada.
 9. [ ] Crie também um item de portfólio.
-10. [ ] Entre no TinhaKids como `pai.teste@girassol.com` / `mypassword` e valide feed e portfólio; as fotos de Sofia não devem aparecer. Depois confira Sofia usando `mae.sofia@girassol.com`.
+10. [ ] Saia do Professor no mesmo app, entre como `pai.teste@girassol.com` / `mypassword` e valide feed e portfólio; as fotos de Sofia não devem aparecer. Depois confira Sofia usando `mae.sofia@girassol.com`.
 11. [ ] Volte à Coordenação e aprove a foto para Marketing.
 12. [ ] Entre como Marketing e confirme que a foto aparece.
 13. [ ] Mude a foto para **Somente escola** e confirme que ela desaparece do Marketing.
@@ -542,23 +498,32 @@ npm run lint
 npm run build
 ```
 
-### TinhaPhone
+### Aplicativo unificado
 
 ```powershell
 cd C:\Users\Guilherme\Desktop\JavaScript_Projects\jorge\tinhaphone
-flutter analyze
+flutter analyze --no-fatal-infos
 flutter test
+flutter build apk --debug
 ```
 
-### TinhaKids
+O conjunto inclui os testes familiares portados, armazenamento, configurações por conta, sessão, isolamento de filas e telas vazias/erros. O analisador ainda informa avisos antigos da câmera; não há erros ou warnings de análise.
+
+### Integração Android com o Prisma real
+
+Use um emulador de testes, API iniciada e as contas acima existentes, sem executar seed sobre sua base.
 
 ```powershell
-cd C:\Users\Guilherme\Desktop\JavaScript_Projects\jorge\tinhakids
-flutter analyze
-flutter test
+flutter test integration_test/unified_app_test.dart -d ID-DO-EMULADOR --no-uninstall
 ```
 
-No TinhaKids também são testados: ausência de login fictício, descarte de sessão antiga de demonstração, atualização dos vínculos, troca rápida entre alunos sem mistura de fotos, saída com requisição pendente e limpeza de conteúdo após erro de acesso.
+O Android usa automaticamente o pacote separado `com.example.tinhaphone.integration` para alvos da pasta `integration_test`. O runner pode removê-lo ao terminar, sem remover a instalação normal ou seus arquivos. É necessário permitir a câmera no aplicativo de teste.
+
+O teste cobre armazenamento seguro nativo, login/validação reais, turma, captura e envio reais, limpeza, logout e área familiar. O recebimento do compartilhamento é simulado no limite do plugin; o menu externo do sistema ainda deve ser conferido manualmente. O teste cria duas fotos no Prisma e não exclui os registros do servidor. Pode usar `--dart-define=TEST_TEACHER=...`, `TEST_FAMILY` e `TEST_PASSWORD` para outras contas de desenvolvimento.
+
+### Projeto familiar antigo
+
+O repositório `tinhakids` permanece como referência, sem alteração nesta unificação. Seus testes podem ser executados separadamente com `flutter test`, mas não substituem os testes do aplicativo único.
 
 ## 14. Registro dos resultados
 
