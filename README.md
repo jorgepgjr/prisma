@@ -2,6 +2,16 @@
 
 Este é um projeto full-stack para gerenciar uma galeria escolar de fotos com controle de acesso baseado em regras (RBAC). O projeto é dividido em um backend FastAPI (Python) e um frontend Next.js (React/TypeScript), utilizando PostgreSQL como banco de dados.
 
+## Gestão de publicações
+
+- **Publicações** (`/publications`): professores visualizam suas turmas e podem criar, editar e excluir apenas publicações de sua autoria. A coordenação administra toda a escola. Marketing não tem acesso.
+- Criação e edição acontecem em modal, com legenda, fotos e alunos destinatários. A turma de uma publicação já identificada não pode ser alterada. As mudanças aparecem para as famílias ao atualizar o feed.
+- Excluir uma publicação remove seus vínculos, não os arquivos das fotos, suas tags, a identificação dos alunos ou os portfólios.
+- As bibliotecas da turma e da coordenação mostram **Em publicação**, contagem de uso e filtros **Todas / Em publicação / Não utilizadas**. O indicador considera apenas publicações existentes.
+- A API aplica automaticamente uma migração incremental de turma, autoria e ordem das fotos. Publicações antigas preservam o nome do autor, mas ficam sob gestão da coordenação; não se atribui autoria de conta pelo nome. **Não execute seed para aplicar esta atualização.**
+- APIs administrativas: `GET/POST /api/posts/`, `GET/PUT/DELETE /api/posts/{id}`. `class_id` é opcional na listagem; respostas incluem `photo_ids`, `student_ids`, `created_by_user_id`, `class_id` e `can_manage`. Fotos incluem `publication_count`. Os endpoints familiares continuam compatíveis.
+- O [guia de testes](GUIA_DE_TESTES_E_FLUXOS.md) descreve os fluxos e os limites do MVP.
+
 ## Estrutura do Projeto
 
 - `/backend`: API construída com FastAPI, SQLAlchemy e PostgreSQL.

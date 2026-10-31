@@ -1,8 +1,62 @@
 import uuid
+import json
 
 from sqlalchemy import inspect, text
 
 from .db import engine
+
+
+def ensure_publication_management_columns() -> None:
+    """Preserve publications; never infer the account author from a display name."""
+    inspector = inspect(engine)
+    if not inspector.has_table("posts"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("posts")}
+    definitions = {
+        "class_id": "INTEGER REFERENCES classes(id)",
+        "created_by_user_id": "INTEGER REFERENCES users(id)",
+        "photo_order": "JSON",
+    }
+    with engine.begin() as connection:
+        for name, definition in definitions.items():
+            if name not in columns:
+                connection.execute(text(f"ALTER TABLE posts ADD COLUMN {name} {definition}"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_posts_class_id ON posts (class_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_posts_created_by_user_id ON posts (created_by_user_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_post_photo_link_photo_id ON post_photo_link (photo_id)"))
+        posts = connection.execute(text("SELECT id, school_id, classroom_name, image_path, class_id, photo_order FROM posts")).mappings().all()
+        for post in posts:
+            params = {"post": post["id"], "school": post["school_id"]}
+            photos = connection.execute(text("""
+                SELECT p.id, p.school_id, p.class_id, p.file_path FROM photos p
+                JOIN post_photo_link l ON l.photo_id = p.id WHERE l.post_id = :post
+            """), params).mappings().all()
+            if not photos:
+                matches = connection.execute(text("SELECT id, school_id, class_id, file_path FROM photos WHERE school_id = :school AND file_path = :path"),
+                                             {"school": post["school_id"], "path": post["image_path"]}).mappings().all()
+                if len(matches) == 1:
+                    photos = matches
+                    connection.execute(text("INSERT INTO post_photo_link (post_id, photo_id) VALUES (:post, :photo)"),
+                                       {"post": post["id"], "photo": photos[0]["id"]})
+            if post["class_id"] is None:
+                valid = all(photo["school_id"] == post["school_id"] and photo["class_id"] is not None for photo in photos)
+                class_ids = {photo["class_id"] for photo in photos}
+                inferred = None
+                if photos and valid and len(class_ids) == 1:
+                    candidate = next(iter(class_ids))
+                    inferred = connection.execute(text("SELECT id FROM classes WHERE id = :id AND school_id = :school"),
+                                                  {"id": candidate, "school": post["school_id"]}).scalar()
+                elif not photos:
+                    matches = connection.execute(text("SELECT id FROM classes WHERE school_id = :school AND name = :name"),
+                                                 {"school": post["school_id"], "name": post["classroom_name"]}).scalars().all()
+                    if len(matches) == 1:
+                        inferred = matches[0]
+                if inferred is not None:
+                    connection.execute(text("UPDATE posts SET class_id = :class WHERE id = :post"), {"class": inferred, "post": post["id"]})
+            if post["photo_order"] is None:
+                ordered = sorted(photos, key=lambda photo: (photo["file_path"] != post["image_path"], photo["id"]))
+                connection.execute(text("UPDATE posts SET photo_order = :order WHERE id = :post"),
+                                   {"order": json.dumps([photo["id"] for photo in ordered]), "post": post["id"]})
 
 
 def ensure_tag_school_columns() -> None:

@@ -20,7 +20,7 @@ def get_posts(
     # Prepara a resposta injetando a URL assinada (Pre-signed URL simulada)
     response_posts = []
     for post in posts:
-        paths = [photo.file_path for photo in post.photos if photo.school_id == child.school_id]
+        paths = [photo.file_path for photo in post.ordered_photos]
         if not paths:
             if post.photos:
                 continue

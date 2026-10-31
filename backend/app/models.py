@@ -1,8 +1,8 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint
-from sqlalchemy.orm import relationship, validates
+from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint, select, func
+from sqlalchemy.orm import relationship, validates, column_property
 
 from .db import Base
 from .security import get_password_hash
@@ -206,6 +206,9 @@ class Post(Base):
     __tablename__ = "posts"
     id = Column(String, primary_key=True, index=True)
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
+    class_id = Column(Integer, ForeignKey("classes.id"), nullable=True, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    photo_order = Column(JSON, nullable=True)
     classroom_name = Column(String, nullable=False)
     teacher_name = Column(String, nullable=False)
     teacher_avatar_url = Column(String, nullable=True)
@@ -215,6 +218,20 @@ class Post(Base):
     school = relationship("School")
     children = relationship("Child", secondary=post_child_link, back_populates="posts")
     photos = relationship("Photo", secondary=post_photo_link, back_populates="posts")
+
+    @property
+    def ordered_photos(self):
+        order = {photo_id: index for index, photo_id in enumerate(self.photo_order or [])}
+        return sorted((photo for photo in self.photos if photo.school_id == self.school_id),
+                      key=lambda photo: (order.get(photo.id, len(order)), photo.file_path != self.image_path, photo.id))
+
+
+# One SQL expression in the photo query, not a request/query per thumbnail.
+Photo.publication_count = column_property(
+    select(func.count(Post.id)).select_from(post_photo_link.join(Post))
+    .where(post_photo_link.c.photo_id == Photo.id, Post.school_id == Photo.school_id)
+    .correlate_except(Post, post_photo_link).scalar_subquery()
+)
 
 
 class Project(Base):
