@@ -677,3 +677,11 @@ Para cada falha, anote:
 - **Pendente:** checklist visual e responsivo em navegador real. A automação de navegador foi bloqueada neste ambiente; testes DOM não confirmam pixels, rolagem e foco nativo.
 - A lista renderiza progressivamente, mas usa o contrato atual que retorna todas as publicações autorizadas. Paginação no servidor permanece uma possível evolução, sem alterar este MVP.
 - Auditoria de dependências (`npm audit`): 19 alertas (16 moderados, 2 altos e 1 crítico), incluindo o Next.js atualmente instalado. A revisão de versões/segurança ficou pendente e separada desta alteração visual; não foi aplicado `audit fix --force` nem alterado o framework automaticamente.
+
+### Regularização da autoria na base local — 31/10/2026
+
+- Por solicitação explícita, cinco publicações antigas da Escola Girassol, que exibiam “Professora Escola Girassol” e estavam sem autoria de conta, foram vinculadas à conta `professora@girassol.com`. Uma sexta publicação já tinha o vínculo correto.
+- Antes da alteração, foram conferidos escola, conta ativa, turmas atribuídas e ausência de outra autoria. Após a transação, as seis publicações passaram na verificação de permissão de gestão da professora.
+- Legendas, datas, fotos, turmas e destinatários foram preservados. As regras gerais de autorização não foram alteradas: não há atribuição automática de autoria pelo nome.
+- Essa foi uma correção de dados no banco local, não uma migração distribuída pelo Git. Fazer pull desta branch não transfere esses vínculos para outro banco. Não executar seed para reproduzir a correção; outros ambientes exigem conferência e autorização próprias.
+- [ ] Atualizar a página de Publicações com a conta da professora e conferir Editar/Excluir nas seis publicações regularizadas.
