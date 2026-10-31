@@ -5,17 +5,18 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft, CalendarDays, Check, CheckCircle2, FileImage, ImageIcon, Info,
+  ArrowLeft, ArrowRight, CalendarDays, Check, CheckCircle2, FileImage, ImageIcon, Info,
   Layers3, LoaderCircle, Send, Tag as TagIcon, UserRoundCheck, X,
 } from "lucide-react";
 import { useAuth } from "../../../context/AuthContext";
+import Modal from "../../components/Modal";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type Tag = { id: number; name: string };
 type Photo = {
   id: number; file_path: string; media_url: string; title?: string; description?: string;
-  uploader_name?: string; created_at: string; status: string; student_ids: number[]; tags: Tag[];
+  uploader_name?: string; created_at: string; status: string; student_ids: number[]; tags: Tag[]; publication_count: number;
 };
 type Student = { id: number; name: string; child_id?: string | null };
 type ManagedPost = {
@@ -64,6 +65,7 @@ export default function ClassPage() {
   const [groupByMonth, setGroupByMonth] = useState(true);
   const [studentFilter, setStudentFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
+  const [publicationFilter, setPublicationFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [modal, setModal] = useState<ModalKind>(null);
@@ -111,10 +113,12 @@ export default function ClassPage() {
     const created = new Date(photo.created_at);
     if (studentFilter && !photo.student_ids.includes(Number(studentFilter))) return false;
     if (tagFilter && !photo.tags.some((tag) => tag.id === Number(tagFilter))) return false;
+    if (publicationFilter === "used" && !photo.publication_count) return false;
+    if (publicationFilter === "unused" && photo.publication_count > 0) return false;
     if (dateFrom && created < new Date(`${dateFrom}T00:00:00`)) return false;
     if (dateTo && created > new Date(`${dateTo}T23:59:59`)) return false;
     return true;
-  }), [dateFrom, dateTo, photos, studentFilter, tagFilter]);
+  }), [dateFrom, dateTo, photos, studentFilter, tagFilter, publicationFilter]);
 
   const groups = useMemo(() => {
     if (!groupByMonth) return [["Todas as fotos", filteredPhotos]] as [string, Photo[]][];
@@ -204,7 +208,7 @@ export default function ClassPage() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-[1500px] items-center gap-4 px-5 py-4">
+        <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-4 px-5 py-4">
           <Link href="/" className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:bg-slate-100"><ArrowLeft className="h-5 w-5" /></Link>
           <div><h1 className="font-semibold">Fotos e publicações</h1><p className="text-xs text-slate-500">Turma #{classId}</p></div>
         </div>
@@ -227,7 +231,8 @@ export default function ClassPage() {
                   </div>
                 </div>
 
-                <div className="mb-5 grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-5">
+                <div className="mb-5 grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <select aria-label="Filtrar uso em publicações" value={publicationFilter} onChange={(event) => setPublicationFilter(event.target.value)} className="input"><option value="">Todas as fotos</option><option value="used">Em publicação</option><option value="unused">Não utilizadas</option></select>
                   <select value={studentFilter} onChange={(event) => setStudentFilter(event.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value="">Todos os alunos</option>{students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}</select>
                   <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value="">Todas as tags</option>{tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select>
                   <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" aria-label="Data inicial" />
@@ -243,6 +248,7 @@ export default function ClassPage() {
                         const selected = selectedIds.includes(photo.id);
                         return <button key={photo.id} onClick={() => selectPhoto(photo)} className={`group relative aspect-square overflow-hidden rounded-xl border-2 bg-slate-100 ${selected ? "border-blue-600 ring-2 ring-blue-100" : activePhotoId === photo.id ? "border-slate-500" : "border-transparent"}`}>
                           <Image src={photoUrl(photo)} alt={photo.title ?? "Foto escolar"} fill unoptimized className="object-cover transition group-hover:scale-[1.02]" />
+                          {photo.publication_count > 0 && <span className="absolute left-1 top-1 rounded-md bg-blue-600/95 px-1.5 py-1 text-[10px] font-semibold text-white">Em publicação</span>}
                           {selectionMode && <span className={`absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full border-2 ${selected ? "border-blue-600 bg-blue-600 text-white" : "border-white bg-black/25 text-transparent"}`}><Check className="h-3.5 w-3.5" /></span>}
                           <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 pb-2 pt-7 text-left text-[11px] text-white">{new Date(photo.created_at).toLocaleDateString("pt-BR")}</span>
                         </button>;
@@ -258,7 +264,7 @@ export default function ClassPage() {
                   {students.length === 0 ? <p className="text-sm text-slate-500">Nenhum aluno nesta turma.</p> : <div className="space-y-2">{students.map((student) => <div key={student.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3"><UserRoundCheck className="h-4 w-4 text-blue-600" /><p className="min-w-0 flex-1 text-sm font-medium">{student.name}</p><button onClick={() => { setStudentFilter(String(student.id)); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50">Ver fotos</button></div>)}</div>}
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <h2 className="mb-3 font-semibold">Publicações recentes</h2>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">Publicações recentes</h2><Link href={`/publications?class_id=${classId}`} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-600">Ver todas <ArrowRight aria-hidden="true" className="h-4 w-4" /></Link></div>
                   {posts.length === 0 ? <p className="text-sm text-slate-500">Nenhuma publicação criada.</p> : <div className="space-y-2">{posts.slice(0, 6).map((post) => <div key={post.id} className="flex gap-3 rounded-xl border border-slate-200 p-2.5"><div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg"><Image src={signedUrl(post.image_url)} alt="Publicação" fill unoptimized className="object-cover" />{post.image_urls?.length > 1 && <span className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white"><Layers3 className="mr-0.5 inline h-3 w-3" />{post.image_urls.length}</span>}</div><div className="min-w-0"><p className="line-clamp-2 text-sm">{post.caption}</p><p className="mt-1 truncate text-xs text-slate-500">{post.child_names.join(", ")}</p></div></div>)}</div>}
                 </div>
               </div>
@@ -284,6 +290,7 @@ function PhotoDetails({ photo, students, tags, canApprove, onTag, onStatus }: { 
       <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Data</dt><dd>{new Date(photo.created_at).toLocaleString("pt-BR")}</dd></div>
       <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Enviada por</dt><dd>{photo.uploader_name ?? "Equipe escolar"}</dd></div>
       <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Alunos</dt><dd>{names.length ? names.join(", ") : "Ainda não identificados"}</dd></div>
+      <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Publicações</dt><dd>{photo.publication_count > 0 ? `Usada em ${photo.publication_count} ${photo.publication_count === 1 ? "publicação" : "publicações"}` : "Ainda não utilizada"}</dd></div>
       {photo.description && <div><dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Descrição</dt><dd>{photo.description}</dd></div>}
     </dl>
     {canApprove && <div className="mt-5 border-t border-slate-200 pt-4"><p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Liberação</p><select value={photo.status} onChange={(event) => void onStatus(event.target.value)} className="input w-full"><option value="PENDING_REVIEW">Aguardando revisão</option><option value="PRIVATE_SCHOOL_ONLY">Somente escola</option><option value="APPROVED_FOR_MARKETING">Aprovada para marketing</option></select></div>}
@@ -300,7 +307,7 @@ function ActionModal(props: {
 }) {
   const isPost = props.kind === "post";
   const valid = props.selectedStudents.length > 0 && (isPost ? props.caption.trim() : props.portfolioTitle.trim() && props.portfolioDescription.trim());
-  return <Modal title={isPost ? "Criar publicação" : "Criar portfólio"} onClose={props.onClose}>
+  return <Modal title={isPost ? "Criar publicação" : "Criar portfólio"} busy={props.saving} onClose={props.onClose}>
     <div className="mb-4 flex gap-2 overflow-x-auto pb-1">{props.photos.map((photo) => <div key={photo.id} className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg"><Image src={photoUrl(photo)} alt="Selecionada" fill unoptimized className="object-cover" /></div>)}</div>
     <p className="mb-4 text-xs text-slate-500">{props.photos.length > 1 ? `${props.photos.length} fotos — será exibido como carrossel.` : "1 foto selecionada."}</p>
     {isPost ? <Field label="Legenda"><textarea value={props.caption} onChange={(event) => props.setCaption(event.target.value)} rows={4} className="input w-full resize-none" placeholder="Conte o que aconteceu nesta atividade..." /></Field> : <><Field label="Título"><input value={props.portfolioTitle} onChange={(event) => props.setPortfolioTitle(event.target.value)} className="input w-full" placeholder="Ex.: Descobrindo as cores" /></Field><Field label="Descrição"><textarea value={props.portfolioDescription} onChange={(event) => props.setPortfolioDescription(event.target.value)} rows={3} className="input w-full resize-none" /></Field><Field label="Objetivos pedagógicos (um por linha)"><textarea value={props.objectives} onChange={(event) => props.setObjectives(event.target.value)} rows={3} className="input w-full resize-none" /></Field></>}
@@ -310,9 +317,6 @@ function ActionModal(props: {
   </Modal>;
 }
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4" onMouseDown={onClose}><div onMouseDown={(event) => event.stopPropagation()} className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl"><div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-semibold">{title}</h2><button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>{children}</div></div>;
-}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="mb-4 block"><span className="mb-1.5 block text-sm font-medium">{label}</span>{children}</label>;

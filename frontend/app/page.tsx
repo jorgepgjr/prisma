@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CalendarDays, GraduationCap, LoaderCircle, LogOut, Sparkles, Users } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import TeacherNavigation from "./components/TeacherNavigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type SchoolClass = { id: number; name: string; year: number };
@@ -48,7 +49,7 @@ export default function DashboardPage() {
 
   return <div className="min-h-screen bg-slate-50">
     <header className="border-b border-slate-200 bg-white">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-4">
         <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-600 text-white"><GraduationCap /></span>
           <div><p className="font-semibold">{user.school.name}</p><p className="text-xs text-slate-500">Área do professor</p></div>
@@ -62,6 +63,7 @@ export default function DashboardPage() {
         </div>
       </div>
     </header>
+    <TeacherNavigation current="classes" />
     <main className="mx-auto max-w-6xl px-5 py-8">
       <h1 className="text-2xl font-semibold">Minhas turmas</h1>
       <p className="mb-8 mt-1 text-sm text-slate-600">Escolha uma turma para organizar fotos e publicações.</p>

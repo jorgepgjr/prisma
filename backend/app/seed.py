@@ -71,7 +71,7 @@ def create_school(session, name: str, slug: str):
         )
         photo.students.append(student)
         post = Post(
-            id=str(uuid.uuid4()), school_id=school.id, classroom_name=school_class.name,
+            id=str(uuid.uuid4()), school_id=school.id, class_id=school_class.id, created_by_user_id=teacher.id, classroom_name=school_class.name,
             teacher_name=teacher.name, teacher_avatar_url="", image_path=photo.file_path,
             caption=f"Publicação de teste de {student.name}",
         )

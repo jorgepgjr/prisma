@@ -116,6 +116,7 @@ class PhotoResponse(BaseModel):
     created_at: datetime
     student_ids: List[int] = []
     tags: List[TagResponse] = []
+    publication_count: int = 0
     class Config:
         from_attributes = True
 
@@ -257,6 +258,11 @@ class PostCreate(BaseModel):
 class ManagedPostResponse(PostResponse):
     photo_id: Optional[int] = None
     child_names: List[str] = []
+    class_id: Optional[int] = None
+    created_by_user_id: Optional[int] = None
+    photo_ids: List[int] = []
+    student_ids: List[int] = []
+    can_manage: bool = False
 
 
 class ProjectResponse(BaseModel):

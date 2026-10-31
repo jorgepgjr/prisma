@@ -599,3 +599,81 @@ Para cada falha, anote:
 - Abra **Fila facial** e veja se há mensagens de erro nas fotos marcadas como **Falhou**.
 - A API aplica automaticamente a migração aditiva das colunas da fila. Não rode `-Seed` para corrigir erros de banco, pois ele apaga os dados locais.
 - Se o erro de coluna ausente persistir, confira a saída da janela do backend e confirme que API e worker foram reiniciados.
+
+## Gestão de publicações — incremento de 27/10/2026
+
+### Preparação e preservação de dados
+
+- Reinicie a API para aplicar a migração incremental; não execute seed nem recrie o banco.
+- A migração acrescenta turma, autoria da conta e ordem das fotos; recupera a turma antiga somente quando identificável e reconcilia fotos antigas por caminho dentro da mesma escola.
+- Publicações antigas mantêm autor, conteúdo, fotos e famílias. Como não possuem autoria de conta comprovada, professores só podem visualizá-las; a coordenação pode editar e excluir.
+- Quando uma publicação antiga estiver sem turma identificável, apenas a coordenação a verá. Ao editar, deverá selecionar a turma e revisar fotos/alunos para regularizar os vínculos.
+
+### Professor — checklist de tela
+
+- [ ] Na página inicial, abrir **Publicações**; na turma, testar **Gerenciar publicações** e conferir o filtro da turma.
+- [ ] Buscar pela legenda e combinar com o filtro de turma. Testar sem publicações e sem resultados.
+- [ ] Abrir **Nova publicação**, selecionar uma turma, marcar várias fotos, ampliar as imagens e conferir a indicação de capa.
+- [ ] Selecionar os alunos destinatários e preencher a legenda. Alunos sem perfil familiar ficam indisponíveis, com orientação para procurar a coordenação.
+- [ ] Conferir os destinatários antes de publicar. Durante o salvamento, o botão e o fechamento ficam bloqueados; deve aparecer confirmação de sucesso.
+- [ ] Abrir **Ver publicação** e conferir todas as fotos, legenda, autor, turma e alunos.
+- [ ] Editar uma publicação recém-criada: trocar legenda, fotos e alunos, sem trocar a turma. A data e a autoria originais devem ser preservadas.
+- [ ] Publicações de colegas e antigas abrem normalmente; seus menus não oferecem edição/exclusão. Não há aviso repetitivo de somente leitura na lista.
+- [ ] Excluir uma publicação criada para este teste. Confirmar o aviso de remoção das famílias e preservação das fotos; cancelar antes para validar ambos os caminhos.
+- [ ] Testar Escape, navegação por teclado, tela estreita, carregamento e falha de rede. Uma imagem indisponível não deve remover o registro; o visualizador oferece nova tentativa.
+
+### Fotos e famílias
+
+- [ ] Na biblioteca da turma, conferir o selo **Em publicação** e a quantidade de usos nos detalhes da foto.
+- [ ] Na biblioteca geral da coordenação, conferir o mesmo selo, contagem e filtros.
+- [ ] Combinar **Em publicação / Não utilizadas** com filtros de turma, aluno, tags ou datas disponíveis em cada página.
+- [ ] Usar a mesma foto em duas publicações de teste. A contagem deve ser 2; excluir uma deve manter o selo e contagem 1.
+- [ ] Remover a foto da última publicação ou excluir essa publicação: o selo desaparece e a foto permanece na biblioteca, com tags e portfólios preservados.
+- [ ] Atualizar o TinhaKids familiar: conferir a criação e as alterações. O aluno removido deixa de receber a publicação; o aluno adicionado passa a recebê-la.
+- [ ] Após excluir a publicação, atualizar o feed familiar e confirmar sua ausência. Arquivos já baixados pela família não são apagados do celular.
+
+### Coordenação e permissões
+
+- [ ] Abrir **Publicações** pelo painel da coordenação e administrar as publicações de sua escola, inclusive antigas e de outros autores.
+- [ ] Professor de outra turma não deve conseguir abrir a publicação por URL/API. Nenhum usuário deve acessar conteúdo de outra escola.
+- [ ] Marketing não acessa a página nem seus endpoints administrativos.
+- [ ] Na edição, alunos que saíram da turma ou fotos indisponíveis exigem revisão explícita da seleção, sem remoção silenciosa.
+
+### Validações executadas nesta entrega
+
+- Backend: `pipenv run python -W ignore::DeprecationWarning -m unittest discover -s tests` — **60 testes passaram**, incluindo 11 novos testes de gestão/migração.
+- Novos testes cobrem autoria, publicações antigas, turmas renomeadas, isolamento de escolas, troca de destinatários, preservação de ordem/capa/data, contagens sem consultas individuais e exclusão sem apagar fotos/portfólios.
+- Frontend: lint sem erros (cinco avisos anteriores na fila facial), verificação TypeScript e build de produção.
+- PostgreSQL local: migração aplicada sem seed, com cópia de segurança prévia; publicações antigas permaneceram sem autoria atribuída automaticamente.
+- API real: criação, edição, autoria, contagem de uso e leitura no feed familiar validadas com publicação temporária; ela foi removida ao terminar, preservando a foto e sua contagem original.
+- **Pendente:** executar o checklist visual acima no navegador. A automação de navegador não conseguiu estabelecer a conexão de depuração neste ambiente; não foi possível declarar esses testes visuais como concluídos.
+- Fora do MVP: arquivamento, restauração, rascunhos, agendamento, notificações e histórico de versões.
+
+## Publicações — reformulação da interface web (30/10/2026)
+
+### Conferência no portal
+
+- [ ] Abrir `/publications` como professor. Conferir nome da escola, profissional e navegação com Publicações ativa; coordenação mantém o acesso ao painel.
+- [ ] Conferir botão Nova publicação.
+- [ ] Buscar por legenda, professor, turma ou aluno; combinar com turma e data. Conferir o total abaixo da barra.
+- [ ] Testar Hoje, Últimos 7 dias, Este mês e Período personalizado. Datas inicial e final inclusivas no fuso local; intervalo invertido mostra orientação.
+- [ ] Ordenar por Mais recentes e Mais antigas. Limpar filtros retorna à lista geral e ordem padrão.
+- [ ] Conferir capas uniformes, contagem de múltiplas fotos, legenda limitada a duas linhas, autor, turma, data e alunos.
+- [ ] Clicar numa linha: abre drawer à direita no desktop e tela cheia no celular, com destaque da linha ativa.
+- [ ] Navegar por todas as fotos; conferir indicador de posição, proporção sem cortes e ampliação. Fechar a ampliação retorna à mesma foto.
+- [ ] Conferir legenda completa com parágrafos e destinatários. Fechar detalhes deve manter busca, turma, data, ordem, lote carregado e rolagem da lista.
+- [ ] Abrir três pontos sem abrir detalhes. Testar Enter, setas, Home/End, Escape e clique fora. Editar/Excluir aparecem apenas quando permitidos pelo servidor.
+- [ ] Editar/excluir pelos menus da lista e do drawer; cancelar e confirmar. A turma continua fixa na edição e a exclusão não apaga fotos.
+- [ ] Criar uma publicação e conferir confirmação; o aplicativo familiar continua recebendo pelo fluxo existente.
+- [ ] Com mais de 25 publicações, testar Carregar mais. Alterar um filtro reinicia a quantidade exibida, mantendo a contagem total correta.
+- [ ] Testar lista vazia, nenhum resultado, falha inicial e nova tentativa, falha nos detalhes e imagens indisponíveis. Fechar durante uma requisição não deve reabrir o painel com resposta atrasada.
+- [ ] Conferir larguras 320, 390, 768 e 1280 px: sem rolagem horizontal, legenda truncada só na lista e controles acessíveis. Testar foco nativo dos dialogs e retorno ao botão de origem.
+
+### Validação automatizada desta reformulação
+
+- `frontend`: `npm test` — 20 testes DOM/lógica, incluindo contratos de criação, edição e exclusão, carrossel, permissões, teclado, filtros, carregamento progressivo e respostas atrasadas. Rede simulada somente nos testes; nenhuma navegação de browser ou escrita no banco real.
+- `frontend`: `npm run lint` — sem erros; permanecem cinco avisos anteriores de imagens na fila facial. TypeScript e build de produção aprovados.
+- `backend`: 60 testes existentes aprovados; nenhuma mudança de API, banco ou dados necessária nesta reformulação.
+- **Pendente:** checklist visual e responsivo em navegador real. A automação de navegador foi bloqueada neste ambiente; testes DOM não confirmam pixels, rolagem e foco nativo.
+- A lista renderiza progressivamente, mas usa o contrato atual que retorna todas as publicações autorizadas. Paginação no servidor permanece uma possível evolução, sem alterar este MVP.
+- Auditoria de dependências (`npm audit`): 19 alertas (16 moderados, 2 altos e 1 crítico), incluindo o Next.js atualmente instalado. A revisão de versões/segurança ficou pendente e separada desta alteração visual; não foi aplicado `audit fix --force` nem alterado o framework automaticamente.

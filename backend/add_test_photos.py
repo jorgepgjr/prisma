@@ -46,7 +46,7 @@ def main():
                     existing_post.teacher_avatar_url = existing_post.teacher_avatar_url or ""
                 else:
                     session.add(Post(
-                        id=post_id, school_id=teacher.school_id,
+                        id=post_id, school_id=teacher.school_id, class_id=classroom.id, created_by_user_id=teacher.id,
                         classroom_name=classroom.name, teacher_name=teacher.name, teacher_avatar_url="",
                         image_path=path,
                         caption=f"Teste com imagem fictícia: {title}.",

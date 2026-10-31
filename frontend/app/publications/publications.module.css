@@ -1,0 +1,23 @@
+.drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  max-width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  color: #0f172a;
+  background: white;
+}
+.drawer[open] { display: flex; flex-direction: column; }
+.drawer::backdrop { background: rgb(15 23 42 / 28%); }
+@media (min-width: 640px) {
+  .drawer { width: 560px; box-shadow: -12px 0 48px rgb(15 23 42 / 10%); }
+}
+.viewer { width: 100vw; background: #020617; color: white; }
+@media (prefers-reduced-motion: no-preference) {
+  .drawer[open] { animation: appear 160ms ease-out; }
+  @keyframes appear { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
+}
