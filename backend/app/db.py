@@ -2,11 +2,10 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.pool import StaticPool
+from .config import settings
 
-# Configuração da URL do banco de dados via variável de ambiente ou padrão para local
-SQLALCHEMY_DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/prisma"
-)
+# Configuração da URL do banco de dados via propriedades centralizadas
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", settings.DATABASE_URL)
 
 # Pool de conexões padrão configurado pelo SQLAlchemy
 engine_options = {}

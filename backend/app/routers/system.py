@@ -243,7 +243,7 @@ def reprocess_all_photos(current_user: models.User = Depends(coordinator_access)
 
 @router.post("/recluster-all")
 def recluster_faces(
-    threshold: float = Query(0.48, ge=0.2, le=0.8),
+    threshold: float = Query(0.58, ge=0.2, le=0.8),
     current_user: models.User = Depends(coordinator_access),
     session: Session = Depends(db.get_db),
 ):

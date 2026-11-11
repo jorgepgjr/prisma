@@ -55,7 +55,7 @@ def extract_test_archives(folder: str | Path) -> List[str]:
 def find_test_images(folder: str | Path) -> List[str]:
     image_paths: List[str] = []
     for root, directories, files in os.walk(folder):
-        directories[:] = [directory for directory in directories if directory != "__MACOSX"]
+        directories[:] = [d for d in directories if not d.startswith(".")]
         for filename in files:
             if not filename.startswith(".") and Path(filename).suffix.lower() in VALID_IMAGE_EXTENSIONS:
                 image_paths.append(os.path.join(root, filename))

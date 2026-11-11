@@ -19,3 +19,5 @@ Thumbs.db
 # Test images
 backend/test_images/
 backend/uploads/
+backend/datasets/*
+

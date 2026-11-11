@@ -355,3 +355,32 @@ class IngestTestFolderResponse(BaseModel):
 class ProcessNowResponse(BaseModel):
     processed_count: int
     message: str
+
+class FaceMatchSuggestion(BaseModel):
+    id: str
+    source_cluster_id: str
+    source_cluster_name: Optional[str] = None
+    source_student_id: Optional[int] = None
+    source_student_name: Optional[str] = None
+    source_face_id: str
+    source_face_crop_url: Optional[str] = None
+    source_photo_id: int
+    source_photo_url: Optional[str] = None
+    source_bounding_box: Optional[List[float]] = None
+
+    target_cluster_id: str
+    target_cluster_name: Optional[str] = None
+    target_student_id: Optional[int] = None
+    target_student_name: Optional[str] = None
+    target_face_id: str
+    target_face_crop_url: Optional[str] = None
+    target_photo_id: int
+    target_photo_url: Optional[str] = None
+    target_bounding_box: Optional[List[float]] = None
+
+    distance: float
+    similarity_percent: float
+
+class FaceClusterMergeRequest(BaseModel):
+    source_cluster_id: str
+    target_cluster_id: str
