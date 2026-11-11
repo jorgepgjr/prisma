@@ -113,6 +113,9 @@ class FaceSecurityTest(unittest.TestCase):
     def test_all_routes_require_coordinator_authentication(self):
         endpoints = [("GET", "/api/faces/clusters"), ("GET", "/api/faces/clusters/cluster-0"),
                      ("GET", "/api/faces/clusters/cluster-0/photos"), ("GET", "/api/faces/crop/face-0"),
+                     ("GET", "/api/faces/detected"),
+                     ("GET", "/api/faces/match-suggestions"),
+                     ("POST", "/api/faces/clusters/merge"),
                      ("POST", "/api/faces/clusters/cluster-0/assign"), ("DELETE", "/api/faces/clusters/cluster-0/assign"),
                      ("GET", "/api/system/processing-status"), ("GET", "/api/system/processing-photos"),
                      ("POST", "/api/system/process-now"), ("POST", "/api/system/ingest-test-folder"),
@@ -211,6 +214,48 @@ class FaceSecurityTest(unittest.TestCase):
         recluster_all_faces(self.session, school_id=self.users[0].school_id)
         self.assertEqual(foreign_face.cluster_id, "cluster-0")
         self.assertIsNotNone(self.session.get(models.FaceCluster, "cluster-0"))
+
+    def test_cannot_match_or_merge_faces_from_same_photo_and_returns_bbox(self):
+        # Cria um segundo cluster e face na mesma escola, mas na mesma foto
+        c2 = models.FaceCluster(id="cluster-0b", school_id=self.users[0].school_id, name="Outra Face Mesma Foto")
+        self.session.add(c2)
+        f2 = models.DetectedFace(
+            id="face-0b", photo_id=self.photos[0].id, cluster_id="cluster-0b",
+            bounding_box=[100, 100, 200, 200], embedding=[0.9, 0.1],
+        )
+        self.session.add(f2)
+        self.session.commit()
+
+        # Como estão na mesma foto, NÃO devem ser sugeridos como match
+        code, suggestions = self.request("/api/faces/match-suggestions", email=self.users[0].email)
+        self.assertEqual(code, 200)
+        self.assertEqual(len(suggestions), 0)
+
+        # Tentativa de fusão direta deve retornar 400
+        code, err = self.request(
+            "/api/faces/clusters/merge", "POST", email=self.users[0].email,
+            body={"source_cluster_id": "cluster-0b", "target_cluster_id": "cluster-0"}
+        )
+        self.assertEqual(code, 400)
+        self.assertIn("mesma", err["detail"].lower())
+
+        # Agora cria uma segunda foto para a face f2
+        photo2 = models.Photo(
+            id=10, school_id=self.users[0].school_id, file_path="school_1/photo2.jpg",
+            uploaded_by_user_id=self.users[0].id, class_id=self.classes[0].id,
+            process_status=models.ProcessStatusEnum.COMPLETED,
+        )
+        self.session.add(photo2)
+        f2.photo_id = photo2.id
+        self.session.commit()
+
+        # Agora que estão em fotos diferentes, o match deve ser sugerido com bounding boxes
+        code, suggestions = self.request("/api/faces/match-suggestions", email=self.users[0].email)
+        self.assertEqual(code, 200)
+        self.assertEqual(len(suggestions), 1)
+        self.assertIsNotNone(suggestions[0]["source_bounding_box"])
+        self.assertIsNotNone(suggestions[0]["target_bounding_box"])
+        self.assertEqual(suggestions[0]["target_bounding_box"], [100, 100, 200, 200])
 
     def test_parent_timestamp_and_google_uniqueness(self):
         from sqlalchemy.exc import IntegrityError

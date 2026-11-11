@@ -14,6 +14,13 @@ UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 FACES_DIR = os.path.join(UPLOADS_DIR, "faces")
 os.makedirs(FACES_DIR, exist_ok=True)
 
+from .config import settings
+
+# Limites calibrados para ambiente escolar (centralizados em app/config.py)
+DEFAULT_DISTANCE_THRESHOLD = settings.FACE_DISTANCE_THRESHOLD  # Distância de cosseno máxima
+MIN_DETECTION_SCORE = settings.FACE_MIN_DETECTION_SCORE         # Confiança mínima de detecção para descartar ruídos/fundo
+MIN_FACE_SIZE_PX = settings.FACE_MIN_SIZE_PX                   # Dimensão mínima (largura/altura em px) da bounding box do rosto
+
 
 class FaceAnalysisEngine:
     """
@@ -71,9 +78,18 @@ class FaceAnalysisEngine:
             faces = self._app.get(img_bgr)
             for face in faces:
                 bbox = [float(x) for x in face.bbox]  # [x1, y1, x2, y2]
-                embedding = face.embedding.tolist() if face.embedding is not None else None
+                bw = bbox[2] - bbox[0]
+                bh = bbox[3] - bbox[1]
                 score = float(face.det_score) if hasattr(face, "det_score") else 1.0
 
+                # Filtra rostos muito pequenos ou com score de detecção muito baixo (ruído de fundo)
+                if score < MIN_DETECTION_SCORE or bw < MIN_FACE_SIZE_PX or bh < MIN_FACE_SIZE_PX:
+                    logger.debug(
+                        f"Face ignorada por baixa qualidade (score={score:.3f}, size={bw:.0f}x{bh:.0f}): {image_path}"
+                    )
+                    continue
+
+                embedding = face.embedding.tolist() if face.embedding is not None else None
                 crop_filename = self._save_face_crop(pil_img, bbox)
 
                 results.append({
@@ -137,17 +153,20 @@ class FaceAnalysisEngine:
 def cluster_embeddings(
     new_embeddings: List[List[float]],
     existing_clusters: List[Dict[str, Any]],
-    distance_threshold: float = 0.48,
+    distance_threshold: float = DEFAULT_DISTANCE_THRESHOLD,
+    new_photo_ids: Optional[List[int]] = None,
 ) -> Tuple[List[Optional[str]], List[List[int]]]:
     """
-    Agrupa novos embeddings relacionando-os com clusters existentes ou criando novos grupos via DBSCAN.
-    Utiliza distância de cosseno calibrada (threshold ~0.48) e comparação com centroides dos clusters.
+    Agrupa novos embeddings relacionando-os com clusters existentes ou criando novos grupos.
+    Utiliza distância de cosseno calibrada para grupos recorrentes (threshold ~0.58)
+    e comparação combinada com o centroide para evitar efeito chaining.
+    Garante que uma mesma imagem nunca tenha dois rostos atribuídos ao mesmo cluster.
 
     Retorna:
     - assigned_cluster_ids: lista com o cluster_id atribuído para cada embedding novo (ou None se for criar novo)
     - new_groups: lista de listas de índices que devem formar novos clusters juntos
     """
-    from sklearn.cluster import DBSCAN
+    from sklearn.cluster import AgglomerativeClustering
     from sklearn.metrics.pairwise import cosine_distances
 
     if not new_embeddings:
@@ -166,10 +185,15 @@ def cluster_embeddings(
     if existing_clusters:
         for idx in list(unassigned_indices):
             vec = new_vecs[idx].reshape(1, -1)
+            photo_id = new_photo_ids[idx] if new_photo_ids and idx < len(new_photo_ids) else None
             best_dist = float("inf")
-            best_cluster_id = None
+            best_cluster = None
 
             for cluster in existing_clusters:
+                # Regra: uma pessoa não pode aparecer duas vezes na mesma imagem
+                if photo_id is not None and photo_id in cluster.get("photo_ids", set()):
+                    continue
+
                 c_embeddings = cluster.get("embeddings")  # List of vectors in this cluster
                 if c_embeddings:
                     c_mat = np.array(c_embeddings, dtype=np.float32)
@@ -188,18 +212,25 @@ def cluster_embeddings(
                     dists_members = cosine_distances(vec, c_mat)[0]
                     min_dist_member = float(np.min(dists_members))
 
+                    # Evita efeito "chaining": exige coerência mínima com o centroide do grupo
+                    if dist_centroid > distance_threshold + 0.05:
+                        continue
+
                     # Distância efetiva (combinação de vizinho mais próximo e centroide)
                     effective_dist = min(dist_centroid, min_dist_member)
 
                     if effective_dist < best_dist:
                         best_dist = effective_dist
-                        best_cluster_id = cluster["id"]
+                        best_cluster = cluster
 
-            if best_dist <= distance_threshold and best_cluster_id is not None:
-                assigned_cluster_ids[idx] = best_cluster_id
+            if best_dist <= distance_threshold and best_cluster is not None:
+                assigned_cluster_ids[idx] = best_cluster["id"]
+                best_cluster["embeddings"].append(new_vecs[idx].tolist())
+                if photo_id is not None:
+                    best_cluster.setdefault("photo_ids", set()).add(photo_id)
                 unassigned_indices.remove(idx)
 
-    # 2. Agrupar os restantes entre si via DBSCAN
+    # 2. Agrupar os restantes entre si via AgglomerativeClustering (average linkage)
     new_groups = []
     if unassigned_indices:
         sub_vecs = new_vecs[unassigned_indices]
@@ -207,8 +238,13 @@ def cluster_embeddings(
             # Apenas 1 face restante -> forma 1 grupo individual
             new_groups.append([unassigned_indices[0]])
         else:
-            db = DBSCAN(eps=distance_threshold, min_samples=1, metric="cosine")
-            labels = db.fit_predict(sub_vecs)
+            clustering = AgglomerativeClustering(
+                n_clusters=None,
+                distance_threshold=distance_threshold,
+                metric="cosine",
+                linkage="average",
+            )
+            labels = clustering.fit_predict(sub_vecs)
 
             group_map: Dict[int, List[int]] = {}
             for sub_i, label in enumerate(labels):
@@ -217,7 +253,29 @@ def cluster_embeddings(
                     group_map[label] = []
                 group_map[label].append(orig_idx)
 
-            new_groups = list(group_map.values())
+            raw_groups = list(group_map.values())
+
+            # Garante que nenhum grupo formado contenha duas faces da mesma foto
+            refined_groups: List[List[int]] = []
+            for grp in raw_groups:
+                groups_by_photo: List[List[int]] = []
+                for orig_idx in grp:
+                    pid = new_photo_ids[orig_idx] if new_photo_ids and orig_idx < len(new_photo_ids) else None
+                    placed = False
+                    if pid is not None:
+                        for g in groups_by_photo:
+                            g_pids = {new_photo_ids[i] for i in g if new_photo_ids and i < len(new_photo_ids)}
+                            if pid not in g_pids:
+                                g.append(orig_idx)
+                                placed = True
+                                break
+                    if not placed:
+                        groups_by_photo.append([orig_idx])
+                refined_groups.extend(groups_by_photo)
+
+            new_groups = refined_groups
+
+    return assigned_cluster_ids, new_groups
 
     return assigned_cluster_ids, new_groups
 
@@ -350,19 +408,23 @@ def run_clustering_routine(session, school_id: Optional[int] = None):
 
     for c in existing_clusters_db:
         embeddings = [f.embedding for f in c.faces if f.embedding is not None and f.photo.school_id == school_id]
+        photo_ids = {f.photo_id for f in c.faces if f.photo and f.photo.school_id == school_id and f.photo_id is not None}
         if embeddings:
             existing_clusters.append({
                 "id": c.id,
                 "student_id": c.student_id,
                 "embeddings": embeddings,
+                "photo_ids": photo_ids,
             })
 
     new_embeddings = [f.embedding for f in unassigned_faces]
+    new_photo_ids = [f.photo_id for f in unassigned_faces]
 
     assigned_cluster_ids, new_groups = cluster_embeddings(
         new_embeddings=new_embeddings,
         existing_clusters=existing_clusters,
-        distance_threshold=0.40,
+        distance_threshold=DEFAULT_DISTANCE_THRESHOLD,
+        new_photo_ids=new_photo_ids,
     )
 
     # 1. Atribui faces que deram match com clusters existentes
@@ -419,13 +481,13 @@ def sync_cluster_student_links(session, school_id: Optional[int] = None):
     session.commit()
 
 
-def recluster_all_faces(session, distance_threshold: float = 0.48, school_id: Optional[int] = None) -> Dict[str, Any]:
+def recluster_all_faces(session, distance_threshold: float = DEFAULT_DISTANCE_THRESHOLD, school_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Executa agrupamento global de todas as faces detectadas no banco de dados.
     Preserva os vínculos de alunos já existentes onde possível.
     """
     from . import models
-    from sklearn.cluster import DBSCAN
+    from sklearn.cluster import AgglomerativeClustering
 
     if school_id is None:
         results = [recluster_all_faces(session, distance_threshold, school.id)
@@ -462,8 +524,16 @@ def recluster_all_faces(session, distance_threshold: float = 0.48, school_id: Op
     norms[norms == 0] = 1.0
     embeddings = embeddings / norms
 
-    db = DBSCAN(eps=distance_threshold, min_samples=1, metric="cosine")
-    labels = db.fit_predict(embeddings)
+    if len(all_faces) == 1:
+        labels = [0]
+    else:
+        clustering = AgglomerativeClustering(
+            n_clusters=None,
+            distance_threshold=distance_threshold,
+            metric="cosine",
+            linkage="average",
+        )
+        labels = clustering.fit_predict(embeddings)
 
     group_map: Dict[int, List[int]] = {}
     for idx, label in enumerate(labels):
@@ -473,27 +543,42 @@ def recluster_all_faces(session, distance_threshold: float = 0.48, school_id: Op
 
     clusters_created = 0
     for label, indices in group_map.items():
-        new_cluster_id = uuid.uuid4().hex
-
-        # Verifica se alguma face desse grupo já tinha aluno associado
-        inherited_student_id = None
+        # Separa faces que sejam da mesma foto para clusters distintos (não permite mesmo rosto 2x na mesma foto)
+        groups_by_photo: List[List[int]] = []
         for i in indices:
-            face_id = all_faces[i].id
-            if face_id in student_map:
-                inherited_student_id = student_map[face_id]
-                break
+            pid = all_faces[i].photo_id
+            placed = False
+            for g in groups_by_photo:
+                g_pids = {all_faces[idx].photo_id for idx in g if all_faces[idx].photo_id is not None}
+                if pid not in g_pids:
+                    g.append(i)
+                    placed = True
+                    break
+            if not placed:
+                groups_by_photo.append([i])
 
-        new_cluster = models.FaceCluster(
-            id=new_cluster_id,
-            school_id=school_id,
-            student_id=inherited_student_id,
-            name=f"Pessoa #{new_cluster_id[:6]}",
-        )
-        session.add(new_cluster)
-        clusters_created += 1
+        for sub_indices in groups_by_photo:
+            new_cluster_id = uuid.uuid4().hex
 
-        for i in indices:
-            all_faces[i].cluster_id = new_cluster_id
+            # Verifica se alguma face desse grupo já tinha aluno associado
+            inherited_student_id = None
+            for i in sub_indices:
+                face_id = all_faces[i].id
+                if face_id in student_map:
+                    inherited_student_id = student_map[face_id]
+                    break
+
+            new_cluster = models.FaceCluster(
+                id=new_cluster_id,
+                school_id=school_id,
+                student_id=inherited_student_id,
+                name=f"Pessoa #{new_cluster_id[:6]}",
+            )
+            session.add(new_cluster)
+            clusters_created += 1
+
+            for i in sub_indices:
+                all_faces[i].cluster_id = new_cluster_id
 
     session.commit()
     sync_cluster_student_links(session, school_id=school_id)

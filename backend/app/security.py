@@ -3,9 +3,10 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
+from .config import settings
 
-# Configurações do JWT
-SECRET_KEY = os.getenv("SECRET_KEY", "uma-chave-secreta-muito-segura-para-desenvolvimento")
+# Configurações do JWT via propriedades centralizadas
+SECRET_KEY = os.getenv("SECRET_KEY", settings.SECRET_KEY)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
